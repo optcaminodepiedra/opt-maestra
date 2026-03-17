@@ -2,13 +2,11 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   typescript: {
-    // Esto evita que el build falle por errores de tipos (común en despliegues iniciales)
+    // Ignoramos errores de tipos para que el deploy no se detenga por minucias
     ignoreBuildErrors: true,
   },
-  eslint: {
-    // Ignoramos linting durante el build para asegurar que suba rápido
-    ignoreDuringBuilds: true,
-  }
+  // Nota: Hemos eliminado la sección 'eslint' porque en Next.js 16 
+  // causa el error "Unrecognized key" que vimos en tus logs anteriores.
 };
 
 export default nextConfig;
