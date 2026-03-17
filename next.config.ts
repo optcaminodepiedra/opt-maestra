@@ -1,15 +1,11 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
   typescript: {
-    // !! ADVERTENCIA !!
-    // Esto permite que el despliegue continúe a pesar de errores de TypeScript.
-    // Es útil para prototipos, pero en el futuro deberíamos arreglar los errores.
+    // Ignoramos errores de tipos para que el deploy no se detenga
     ignoreBuildErrors: true,
   },
-  eslint: {
-    // También ignoramos errores de ESLint durante el build
-    ignoreDuringBuilds: true,
-  },
+  // Eliminamos la sección de eslint que causaba el error en la versión 16
 };
 
 export default nextConfig;
