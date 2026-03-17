@@ -1,0 +1,797 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  MASTER_ADMIN
+  OWNER
+  SUPERIOR
+  MANAGER
+  STAFF_KITCHEN
+  STAFF_BAR
+  STAFF_WAITER
+  STAFF_RECEPTION
+  STAFF_EXPERIENCES
+  ACCOUNTING
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  TRANSFER
+}
+
+enum WithdrawalStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+}
+
+model Business {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  cashpoints  Cashpoint[]
+  sales       Sale[]
+  expenses    Expense[]
+  shifts      Shift[]
+  withdrawals Withdrawal[]
+
+  users        User[] @relation("UserBusiness")
+  primaryUsers User[] @relation("PrimaryBusiness")
+
+  tasks Task[]
+
+  // ==============================
+  // ✅ Restaurante
+  // ==============================
+  restaurantTables RestaurantTable[] @relation("BusinessRestaurantTables")
+  menuItems        MenuItem[]        @relation("BusinessMenuItems")
+  restaurantOrders RestaurantOrder[] @relation("BusinessRestaurantOrders")
+
+  // ==============================
+  // ✅ Almacén / Requisiciones
+  // ==============================
+  inventoryItems InventoryItem[]
+  inventoryMoves InventoryMovement[]
+  requisitions   Requisition[]
+
+  // ==============================
+  // ✅ Hotel / PMS
+  // ==============================
+  hotelRoomTypes    HotelRoomType[]
+  hotelRooms        HotelRoom[]
+  hotelReservations HotelReservation[]
+  hotelCharges      HotelCharge[]
+  hotelFolios       HotelFolio[]
+  hotelPayments     HotelPayment[]
+}
+
+model Cashpoint {
+  id         String   @id @default(cuid())
+  name       String
+  businessId String
+  createdAt  DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id])
+  shifts   Shift[]
+  sales    Sale[]
+
+  // ✅ Restaurante: menú por caja/local
+  menuItems MenuItem[]
+
+  // ✅ Restaurante: mesas por caja/local (FALTABA ESTE INVERSO)
+  restaurantTables RestaurantTable[] @relation("CashpointRestaurantTables")
+
+  @@unique([businessId, name])
+}
+
+model User {
+  id           String   @id @default(cuid())
+  fullName     String   @unique
+  username     String   @unique
+  passwordHash String
+  role         Role
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  // ✅ PIN POS (login rápido tipo SoftRestaurant)
+  pinHash      String? // bcrypt hash
+  pinUpdatedAt DateTime?
+
+  businessId String?
+  business   Business? @relation("UserBusiness", fields: [businessId], references: [id])
+
+  primaryBusinessId String?
+  primaryBusiness   Business? @relation("PrimaryBusiness", fields: [primaryBusinessId], references: [id])
+
+  sales                Sale[]
+  expenses             Expense[]
+  shifts               Shift[]
+  withdrawalsRequested Withdrawal[] @relation("RequestedBy")
+  withdrawalsApproved  Withdrawal[] @relation("ApprovedBy")
+
+  assignedTasks Task[] @relation("AssignedTasks")
+  createdTasks  Task[] @relation("CreatedTasks")
+
+  taskComments    TaskComment[]
+  taskAttachments TaskAttachment[]
+
+  // ✅ Restaurante
+  restaurantOrders RestaurantOrder[] @relation("UserRestaurantOrders")
+
+  // ✅ Almacén
+  inventoryMovesCreated InventoryMovement[] @relation("InventoryMoveCreatedBy")
+  reqCreated            Requisition[]       @relation("ReqCreatedBy")
+  reqApproved           Requisition[]       @relation("ReqApprovedBy")
+
+  // ==============================
+  // ✅ Hotel / PMS
+  // ==============================
+  hotelReservations HotelReservation[] @relation("UserHotelReservations")
+  hotelFolios       HotelFolio[]
+  hotelPayments     HotelPayment[]
+}
+
+model Shift {
+  id          String    @id @default(cuid())
+  businessId  String
+  cashpointId String
+  openedById  String
+  openedAt    DateTime  @default(now())
+  closedAt    DateTime?
+  notes       String?
+
+  expectedCashCents     Int @default(0)
+  expectedCardCents     Int @default(0)
+  expectedTransferCents Int @default(0)
+
+  countedCashCents     Int?
+  countedCardCents     Int?
+  countedTransferCents Int?
+
+  business  Business  @relation(fields: [businessId], references: [id])
+  cashpoint Cashpoint @relation(fields: [cashpointId], references: [id])
+  openedBy  User      @relation(fields: [openedById], references: [id])
+
+  sales Sale[]
+
+  @@index([businessId, openedAt])
+}
+
+model Sale {
+  id          String        @id @default(cuid())
+  businessId  String
+  cashpointId String
+  shiftId     String?
+  userId      String
+  amountCents Int
+  method      PaymentMethod
+  concept     String
+  createdAt   DateTime      @default(now())
+
+  business  Business  @relation(fields: [businessId], references: [id])
+  cashpoint Cashpoint @relation(fields: [cashpointId], references: [id])
+  shift     Shift?    @relation(fields: [shiftId], references: [id])
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([businessId, createdAt])
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  businessId  String
+  userId      String
+  amountCents Int
+  category    String
+  note        String?
+  evidenceUrl String?
+  createdAt   DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id])
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@index([businessId, createdAt])
+}
+
+model Withdrawal {
+  id          String           @id @default(cuid())
+  businessId  String
+  amountCents Int
+  reason      String?
+  status      WithdrawalStatus @default(REQUESTED)
+
+  requestedById String
+  approvedById  String?
+
+  createdAt DateTime  @default(now())
+  decidedAt DateTime?
+
+  business    Business @relation(fields: [businessId], references: [id])
+  requestedBy User     @relation("RequestedBy", fields: [requestedById], references: [id])
+  approvedBy  User?    @relation("ApprovedBy", fields: [approvedById], references: [id])
+
+  @@index([businessId, createdAt])
+}
+
+// ==============================
+// ✅ Kanban / Tasks
+// ==============================
+
+enum TaskType {
+  ACTIVITY
+  TICKET
+}
+
+enum TaskStatus {
+  TODO
+  DOING
+  BLOCKED
+  DONE
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum Area {
+  OPERATIONS
+  SYSTEMS
+  MARKETING
+  ADMIN
+}
+
+model Task {
+  id          String  @id @default(cuid())
+  title       String
+  description String?
+
+  type     TaskType
+  status   TaskStatus
+  priority Priority
+  area     Area
+
+  businessId String?
+  business   Business? @relation(fields: [businessId], references: [id])
+
+  assignedId String?
+  assigned   User?   @relation("AssignedTasks", fields: [assignedId], references: [id])
+
+  createdById String
+  createdBy   User   @relation("CreatedTasks", fields: [createdById], references: [id])
+
+  startDate  DateTime?
+  dueDate    DateTime?
+  endDate    DateTime?
+  resolvedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  comments    TaskComment[]
+  attachments TaskAttachment[]
+
+  @@index([type, status])
+  @@index([businessId])
+  @@index([assignedId])
+  @@index([createdById])
+}
+
+model TaskComment {
+  id        String   @id @default(cuid())
+  taskId    String
+  userId    String
+  body      String
+  createdAt DateTime @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([taskId, createdAt])
+}
+
+model TaskAttachment {
+  id        String   @id @default(cuid())
+  taskId    String
+  userId    String
+  name      String
+  url       String
+  createdAt DateTime @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([taskId, createdAt])
+}
+
+// ==============================
+// ✅ Restaurante / POS / KDS
+// ==============================
+
+enum OrderStatus {
+  OPEN
+  SENT
+  SERVED
+  PAID
+  CANCELED
+}
+
+enum KitchenStatus {
+  NEW
+  PREPARING
+  READY
+  DELIVERED
+  CANCELED
+}
+
+model RestaurantTable {
+  id         String  @id @default(cuid())
+  businessId String
+  name       String
+  capacity   Int     @default(4)
+  isActive   Boolean @default(true)
+
+  // ✅ (opcional) mesa ligada a una caja/punto (útil en Rancho: cantina vs restaurante)
+  cashpointId String?
+  cashpoint   Cashpoint? @relation("CashpointRestaurantTables", fields: [cashpointId], references: [id])
+
+  // ✅ mapa de mesas (para UI tipo Soft)
+  area      String?
+  posX      Int?
+  posY      Int?
+  sortOrder Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business Business          @relation("BusinessRestaurantTables", fields: [businessId], references: [id])
+  orders   RestaurantOrder[]
+
+  @@unique([businessId, name])
+  @@index([businessId, isActive])
+  @@index([businessId, area])
+  @@index([cashpointId])
+}
+
+model MenuItem {
+  id         String @id @default(cuid())
+  businessId String
+
+  // ✅ si viene null: item compartido del negocio
+  // ✅ si viene con id: item exclusivo de esa caja/local
+  cashpointId String?
+  cashpoint   Cashpoint? @relation(fields: [cashpointId], references: [id])
+
+  name       String
+  category   String
+  priceCents Int
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business   Business              @relation("BusinessMenuItems", fields: [businessId], references: [id])
+  orderItems RestaurantOrderItem[]
+
+  @@index([businessId, isActive])
+  @@index([businessId, category])
+  @@index([cashpointId])
+}
+
+model RestaurantOrder {
+  id         String      @id @default(cuid())
+  businessId String
+  tableId    String
+  userId     String
+  status     OrderStatus @default(OPEN)
+  note       String?
+
+  openedAt  DateTime  @default(now())
+  closedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  business Business        @relation("BusinessRestaurantOrders", fields: [businessId], references: [id])
+  table    RestaurantTable @relation(fields: [tableId], references: [id])
+  user     User            @relation("UserRestaurantOrders", fields: [userId], references: [id])
+
+  items RestaurantOrderItem[]
+
+  @@index([businessId, status, openedAt])
+  @@index([tableId, status])
+}
+
+model RestaurantOrderItem {
+  id            String        @id @default(cuid())
+  orderId       String
+  menuItemId    String
+  qty           Int           @default(1)
+  priceCents    Int
+  note          String?
+  kitchenStatus KitchenStatus @default(NEW)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  order    RestaurantOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem MenuItem        @relation(fields: [menuItemId], references: [id])
+
+  @@index([orderId, createdAt])
+  @@index([kitchenStatus, createdAt])
+}
+
+// ==============================
+// ✅ Almacén / Inventario / Requisiciones
+// ==============================
+
+enum StockUnit {
+  PIECE
+  KG
+  LT
+  BOX
+  PACK
+}
+
+enum MovementType {
+  IN
+  OUT
+  ADJUST
+  TRANSFER
+}
+
+enum RequisitionStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  ORDERED
+  RECEIVED
+  CLOSED
+}
+
+model InventoryItem {
+  id         String    @id @default(cuid())
+  businessId String
+  sku        String?
+  name       String
+  category   String?
+  unit       StockUnit @default(PIECE)
+
+  minQty    Int @default(0)
+  onHandQty Int @default(0)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business  Business            @relation(fields: [businessId], references: [id])
+  movements InventoryMovement[]
+  reqItems  RequisitionItem[]
+
+  @@index([businessId, isActive])
+  @@index([businessId, name])
+}
+
+model InventoryMovement {
+  id          String       @id @default(cuid())
+  businessId  String
+  itemId      String
+  type        MovementType
+  qty         Int
+  note        String?
+  createdById String
+  createdAt   DateTime     @default(now())
+
+  business  Business      @relation(fields: [businessId], references: [id])
+  item      InventoryItem @relation(fields: [itemId], references: [id])
+  createdBy User          @relation("InventoryMoveCreatedBy", fields: [createdById], references: [id])
+
+  @@index([businessId, createdAt])
+  @@index([itemId, createdAt])
+}
+
+model Requisition {
+  id         String            @id @default(cuid())
+  businessId String
+  status     RequisitionStatus @default(DRAFT)
+  title      String
+  note       String?
+  neededBy   DateTime?
+
+  createdById  String
+  approvedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business   Business @relation(fields: [businessId], references: [id])
+  createdBy  User     @relation("ReqCreatedBy", fields: [createdById], references: [id])
+  approvedBy User?    @relation("ReqApprovedBy", fields: [approvedById], references: [id])
+
+  items RequisitionItem[]
+
+  @@index([businessId, status, createdAt])
+}
+
+model RequisitionItem {
+  id            String @id @default(cuid())
+  requisitionId String
+  itemId        String
+
+  qtyRequested Int
+  qtyApproved  Int?
+  qtyReceived  Int?
+
+  note      String?
+  createdAt DateTime @default(now())
+
+  requisition Requisition   @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  item        InventoryItem @relation(fields: [itemId], references: [id])
+
+  @@index([requisitionId])
+  @@index([itemId])
+}
+
+// ==============================
+// ✅ Ajustes Generales (Plataforma)
+// ==============================
+
+enum CatalogType {
+  EXPENSE_CATEGORY
+  SALE_CONCEPT
+  TASK_AREA_TAG
+  INVENTORY_CATEGORY
+  GENERIC
+}
+
+model PlatformSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String // guardamos JSON string o texto plano
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+model CatalogItem {
+  id        String      @id @default(cuid())
+  type      CatalogType
+  name      String
+  isActive  Boolean     @default(true)
+  sortOrder Int         @default(0)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@unique([type, name])
+  @@index([type, isActive])
+}
+
+// (Opcional recomendado) Auditoría de cambios
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actorName String?
+  action    String // "SET_SETTING", "ADD_CATALOG", etc
+  target    String // "PlatformSetting", "CatalogItem", etc
+  targetId  String?
+  before    String?
+  after     String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// ==============================
+// ✅ HOTEL / PMS
+// ==============================
+
+enum RoomStatus {
+  AVAILABLE
+  OCCUPIED
+  CLEANING
+  DIRTY
+  OUT_OF_SERVICE
+  MAINTENANCE
+  BLOCKED
+}
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELED
+  NO_SHOW
+}
+
+enum RoomTypeKind {
+  STANDARD
+  SUITE
+  GLAMPING
+  CONTAINER
+}
+
+model HotelRoomType {
+  id         String @id @default(cuid())
+  businessId String
+
+  name           String
+  description    String?
+  basePriceCents Int
+  capacity       Int
+  kind           RoomTypeKind @default(STANDARD)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business Business    @relation(fields: [businessId], references: [id])
+  rooms    HotelRoom[]
+
+  @@unique([businessId, name])
+  @@index([businessId])
+}
+
+model HotelRoom {
+  id         String @id @default(cuid())
+  businessId String
+  roomTypeId String
+
+  // Ej: "101", "201", "Contenedor 1"
+  name     String
+  floor    String?
+  status   RoomStatus @default(AVAILABLE)
+  isActive Boolean    @default(true)
+
+  // Mapa visual (opcional)
+  area      String?
+  posX      Int?
+  posY      Int?
+  sortOrder Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business     Business           @relation(fields: [businessId], references: [id])
+  roomType     HotelRoomType      @relation(fields: [roomTypeId], references: [id])
+  reservations HotelReservation[]
+
+  @@unique([businessId, name])
+  @@index([businessId, status])
+  @@index([businessId, isActive])
+  @@index([roomTypeId])
+}
+
+model HotelGuest {
+  id         String  @id @default(cuid())
+  fullName   String
+  phone      String?
+  email      String?
+  documentId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reservations HotelReservation[]
+
+  @@index([fullName])
+  @@index([phone])
+  @@index([email])
+}
+
+model HotelReservation {
+  id         String   @id @default(cuid())
+  businessId String
+  roomId     String
+  guestId    String
+  userId     String
+
+  checkIn    DateTime
+  checkOut   DateTime
+
+  status     ReservationStatus @default(CONFIRMED)
+
+  adults     Int @default(1)
+  children   Int @default(0)
+
+  // ✅ IMPORTANTE: estos dos campos NO existían en tu DB y por eso tronaba
+  totalCents   Int @default(0)
+  depositCents Int @default(0)
+
+  // ✅ en tu error Prisma sugiere que el campo se llama "notes"
+  notes      String?
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id])
+  room     HotelRoom  @relation(fields: [roomId], references: [id])
+  guest    HotelGuest @relation(fields: [guestId], references: [id])
+  user     User       @relation("UserHotelReservations", fields: [userId], references: [id])
+
+  charges HotelCharge[]
+  folio   HotelFolio?
+
+  @@index([businessId, status])
+  @@index([roomId, status])
+  @@index([guestId])
+  @@index([userId])
+  @@index([roomId, checkIn, checkOut])
+}
+
+model HotelCharge {
+  id            String @id @default(cuid())
+  businessId    String
+  reservationId String
+
+  amountCents Int
+  concept     String
+  note        String?
+
+  createdAt DateTime @default(now())
+
+  business    Business         @relation(fields: [businessId], references: [id])
+  reservation HotelReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@index([reservationId, createdAt])
+  @@index([businessId, createdAt])
+}
+
+enum FolioStatus {
+  OPEN
+  CLOSED
+  CANCELED
+}
+
+model HotelFolio {
+  id            String @id @default(cuid())
+  businessId    String
+  reservationId String @unique
+
+  // resumen (snapshot) — se puede recalcular
+  totalChargesCents  Int @default(0)
+  totalPaymentsCents Int @default(0)
+  depositCents       Int @default(0)
+
+  isClosed   Boolean   @default(false)
+  closedAt   DateTime?
+  closedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business    Business         @relation(fields: [businessId], references: [id])
+  // ✅ FIX: antes decía Reservation, debe ser HotelReservation
+  reservation HotelReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  closedBy User? @relation(fields: [closedById], references: [id])
+
+  payments HotelPayment[]
+
+  @@index([businessId, createdAt])
+}
+
+model HotelPayment {
+  id         String @id @default(cuid())
+  businessId String
+  folioId    String
+
+  amountCents Int
+  method      PaymentMethod
+  note        String?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  business  Business   @relation(fields: [businessId], references: [id])
+  folio     HotelFolio @relation(fields: [folioId], references: [id], onDelete: Cascade)
+  createdBy User?      @relation(fields: [createdById], references: [id])
+
+  @@index([folioId, createdAt])
+  @@index([businessId, createdAt])
+}
