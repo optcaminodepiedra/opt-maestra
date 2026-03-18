@@ -21,7 +21,7 @@ export const authOptions: NextAuthOptions = {
         const user = await prisma.user.findUnique({ where: { username } });
         if (!user || !user.isActive) return null;
 
-        const ok = await bcrypt.compare(password, user.passwordHash);
+        const ok = password === user.passwordHash;
         if (!ok) return null;
 
         // lo que regresas aquí se guarda en el token (jwt)
