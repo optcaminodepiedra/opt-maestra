@@ -96,6 +96,7 @@ model User {
   id           String   @id @default(cuid())
   fullName     String   @unique
   username     String   @unique
+  email        String?  @unique // ✅ CAMPO AÑADIDO PARA LOGIN CON GOOGLE
   passwordHash String
   role         Role
   isActive     Boolean  @default(true)
