@@ -72,7 +72,7 @@ export default function LoginPage() {
 
             <div className="text-xs text-muted-foreground">
               Demo: contraseña temporal{" "}
-              <span className="font-medium">Camino2026!</span>
+              <span className="font-medium">Cam</span>
             </div>
           </form>
         </CardContent>
