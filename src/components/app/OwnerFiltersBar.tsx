@@ -2,50 +2,83 @@
 
 import { useMemo } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { format } from "date-fns";
+import { DateRange } from "react-day-picker";
+import { CalendarDateRangePicker } from "@/components/ui/date-range-picker";
 
 type Biz = { id: string; name: string };
 
 export function OwnerFiltersBar({
   businesses,
-  defaultPreset = "30d",
 }: {
   businesses: Biz[];
-  defaultPreset?: "today" | "7d" | "30d" | "ytd";
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const sp = useSearchParams();
 
-  const preset = (sp.get("range") as any) || defaultPreset;
   const businessId = sp.get("businessId") || "all";
+  
+  // Leemos las fechas exactas desde la URL
+  const fromParam = sp.get("from");
+  const toParam = sp.get("to");
 
-  const options = useMemo(() => [{ id: "all", name: "Todas" }, ...businesses], [businesses]);
+  const options = useMemo(() => [{ id: "all", name: "Todas las unidades" }, ...businesses], [businesses]);
 
-  function setParam(key: string, value: string) {
+  // Convertimos el texto de la URL en fechas para el calendario
+  const date: DateRange | undefined = useMemo(() => {
+    if (fromParam) {
+      return {
+        from: new Date(`${fromParam}T00:00:00`),
+        to: toParam ? new Date(`${toParam}T23:59:59`) : undefined,
+      };
+    }
+    return undefined;
+  }, [fromParam, toParam]);
+
+  // Cuando el usuario elige una nueva fecha en el calendario, actualizamos la URL
+  function setDate(newDate: DateRange | undefined) {
     const next = new URLSearchParams(sp.toString());
-    if (!value || value === "all") next.delete(key);
-    else next.set(key, value);
+    next.delete("range"); // Borramos el filtro viejo ("7d", "month") si existía
+
+    if (newDate?.from) {
+      next.set("from", format(newDate.from, "yyyy-MM-dd"));
+    } else {
+      next.delete("from");
+    }
+
+    if (newDate?.to) {
+      next.set("to", format(newDate.to, "yyyy-MM-dd"));
+    } else {
+      next.delete("to");
+    }
+
+    router.push(`${pathname}?${next.toString()}`);
+  }
+
+  // Cuando cambia la sucursal
+  function setBusiness(value: string) {
+    const next = new URLSearchParams(sp.toString());
+    if (!value || value === "all") next.delete("businessId");
+    else next.set("businessId", value);
     router.push(`${pathname}?${next.toString()}`);
   }
 
   return (
-    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-      <Tabs value={preset} onValueChange={(v) => setParam("range", v)} className="w-full md:w-auto">
-        <TabsList>
-          <TabsTrigger value="today">Hoy</TabsTrigger>
-          <TabsTrigger value="7d">7 días</TabsTrigger>
-          <TabsTrigger value="30d">30 días</TabsTrigger>
-          <TabsTrigger value="ytd">YTD</TabsTrigger>
-        </TabsList>
-      </Tabs>
-
+    <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between rounded-lg border bg-card p-3 shadow-sm">
+      {/* Selector de Fechas */}
       <div className="flex items-center gap-2">
-        <div className="text-xs text-muted-foreground">Unidad</div>
+        <span className="text-sm font-medium text-muted-foreground hidden sm:inline-block">Periodo:</span>
+        <CalendarDateRangePicker date={date} setDate={setDate} />
+      </div>
+
+      {/* Selector de Sucursal */}
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-medium text-muted-foreground">Unidad:</span>
         <select
-          className="h-9 rounded-md border bg-background px-3 text-sm"
+          className="h-10 w-full md:w-[220px] rounded-md border bg-background px-3 text-sm focus:ring-2 focus:ring-primary outline-none"
           value={businessId}
-          onChange={(e) => setParam("businessId", e.target.value)}
+          onChange={(e) => setBusiness(e.target.value)}
         >
           {options.map((o) => (
             <option key={o.id} value={o.id}>

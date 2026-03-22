@@ -74,33 +74,34 @@ async function main() {
   const defaultPinHash = await bcrypt.hash("1234", 10);
 
   const users = [
-    { fullName: "Arroiz", username: "arroiz", role: Role.MASTER_ADMIN, primaryBusiness: "Hotel Camino de Piedra" },
+    // 👇 PON TU CORREO REAL DE GOOGLE AQUÍ
+    { fullName: "Rodrigo", username: "arroiz", email: "optcaminodepiedra@gmail.com", role: Role.MASTER_ADMIN },
+    { fullName: "Alejandro N", username: "alejandro.n", email: "alejandro.n@gmail.com", role: Role.OWNER },
+    { fullName: "Saul N", username: "saul.n", email: "saul.n@gmail.com", role: Role.OWNER },
+    { fullName: "Sabina N", username: "sabina.n", email: "sabina.n@gmail.com", role: Role.OWNER },
+    { fullName: "Samantha S", username: "samantha.s", email: "samantha.s@gmail.com", role: Role.OWNER },
 
-    { fullName: "Alejandro N", username: "alejandro.n", role: Role.OWNER },
-    { fullName: "Saul N", username: "saul.n", role: Role.OWNER },
-    { fullName: "Sabina N", username: "sabina.n", role: Role.OWNER },
-    { fullName: "Samantha S", username: "samantha.s", role: Role.OWNER },
+    { fullName: "Judith R", username: "judith.r", email: "juuddd55@gmail.com", role: Role.SUPERIOR, primaryBusiness: "Bodega 4" },
+    { fullName: "Claudia O", username: "claudia.o", email: "clau.oliveros08@gmail.com", role: Role.SUPERIOR, primaryBusiness: "Tierra Adentro Hotel Fashion Grill & Spa" },
+    { fullName: "Hazael A", username: "hazael.a", email: "hazael.a@gmail.com", role: Role.SUPERIOR, primaryBusiness: "Rancho El Milagrito" },
 
-    { fullName: "Judith R", username: "judith.r", role: Role.SUPERIOR, primaryBusiness: "Bodega 4" },
-    { fullName: "Claudia O", username: "claudia.o", role: Role.SUPERIOR, primaryBusiness: "Tierra Adentro Hotel Fashion Grill & Spa" },
-    { fullName: "Hazael A", username: "hazael.a", role: Role.SUPERIOR, primaryBusiness: "Rancho El Milagrito" },
+    { fullName: "Saul P", username: "saul.p", email: "saul.p@gmail.com", role: Role.MANAGER },
+    { fullName: "Iris", username: "iris", email: "iris@gmail.com", role: Role.MANAGER },
 
-    { fullName: "Saul P", username: "saul.p", role: Role.MANAGER },
-    { fullName: "Iris", username: "iris", role: Role.MANAGER },
+    { fullName: "Carlos P", username: "carlos.p", email: "carlos.p@gmail.com", role: Role.STAFF_KITCHEN, primaryBusiness: "Bodega 4" },
+    { fullName: "Daniela", username: "daniela", email: "daniela@gmail.com", role: Role.STAFF_KITCHEN },
+    { fullName: "Sabrina P", username: "sabrina.p", email: "sabrina.p@gmail.com", role: Role.STAFF_BAR, primaryBusiness: "Bar San Antonio" },
 
-    { fullName: "Carlos P", username: "carlos.p", role: Role.STAFF_KITCHEN, primaryBusiness: "Bodega 4" },
-    { fullName: "Daniela", username: "daniela", role: Role.STAFF_KITCHEN },
-    { fullName: "Sabrina P", username: "sabrina.p", role: Role.STAFF_BAR, primaryBusiness: "Bar San Antonio" },
+    { fullName: "Carlos", username: "carlos", email: "j.carl232@gmail.com", role: Role.OWNER },
+    { fullName: "Fernanda", username: "fernanda", email: "af.turismogto@gmail.com", role: Role.OWNER},
+    { fullName: "Francisco", username: "francisco", email: "francisco@gmail.com", role: Role.STAFF_WAITER, primaryBusiness: "Bodega 4" },
+    { fullName: "Vanessa", username: "vanessa", email: "vanessa@gmail.com", role: Role.STAFF_WAITER, primaryBusiness: "Bodega 4" },
 
-    { fullName: "Carlos", username: "carlos", role: Role.STAFF_WAITER, primaryBusiness: "Bodega 4" },
-    { fullName: "Francisco", username: "francisco", role: Role.STAFF_WAITER, primaryBusiness: "Bodega 4" },
-    { fullName: "Vanessa", username: "vanessa", role: Role.STAFF_WAITER, primaryBusiness: "Bodega 4" },
+    { fullName: "Ana", username: "ana", email: "ana@gmail.com", role: Role.STAFF_RECEPTION, primaryBusiness: "Hotel Camino de Piedra" },
 
-    { fullName: "Ana", username: "ana", role: Role.STAFF_RECEPTION, primaryBusiness: "Hotel Camino de Piedra" },
+    { fullName: "Paulo", username: "paulo", email: "pauloguzman8@gmail.com", role: Role.MANAGER, primaryBusiness: "Tierra Adentro Hotel Fashion Grill & Spa" },
 
-    { fullName: "Paulo", username: "paulo", role: Role.MANAGER, primaryBusiness: "Tierra Adentro Hotel Fashion Grill & Spa" },
-
-    { fullName: "Cristian", username: "cristian", role: Role.STAFF_EXPERIENCES, primaryBusiness: "Rancho El Milagrito" },
+    { fullName: "Cristian", username: "cristian", email: "cristian@gmail.com", role: Role.STAFF_EXPERIENCES, primaryBusiness: "Rancho El Milagrito" },
   ];
 
   for (const u of users) {
@@ -108,6 +109,7 @@ async function main() {
       where: { username: u.username },
       update: {
         fullName: u.fullName,
+        email: u.email || null, // ✅ Se añade el campo email
         role: u.role,
         isActive: true,
         primaryBusinessId: u.primaryBusiness ? biz.get(u.primaryBusiness) : null,
@@ -118,6 +120,7 @@ async function main() {
       create: {
         fullName: u.fullName,
         username: u.username,
+        email: u.email || null, // ✅ Se añade el campo email
         role: u.role,
         isActive: true,
         primaryBusinessId: u.primaryBusiness ? biz.get(u.primaryBusiness) : null,
