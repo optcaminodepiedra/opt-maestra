@@ -1,13 +1,16 @@
-// Busca las variables searchParams en la parte superior de tu función principal
-  const businessId = searchParams.businessId || "all";
-  const preset = searchParams.range || "30d";
-  const from = searchParams.from; // <--- AGREGA ESTO
-  const to = searchParams.to;     // <--- AGREGA ESTO
+import { getServerSession } from "next-auth";
+import { redirect } from "next/navigation";
+import { authOptions } from "@/lib/auth";
 
-  // Y donde se hace la llamada a la base de datos, cámbialo a esto:
-  const dashboardData = await getOwnerSalesDashboard({
-    businessId: businessId === "all" ? null : businessId,
-    preset: preset as any,
-    from: from as string | undefined,
-    to: to as string | undefined,
-  });
+export default async function AppEntry() {
+  const session = await getServerSession(authOptions);
+  if (!session) redirect("/login");
+
+  const role = (session as any).user.role as string;
+
+  if (role === "OWNER" || role === "MASTER_ADMIN") redirect("/app/owner");
+  if (role === "SUPERIOR" || role === "MANAGER") redirect("/app/manager");
+  if (role === "ACCOUNTING") redirect("/app/accounting");
+
+  redirect("/app/ops");
+}

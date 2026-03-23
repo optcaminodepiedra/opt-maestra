@@ -138,6 +138,9 @@ model User {
   hotelReservations HotelReservation[] @relation("UserHotelReservations")
   hotelFolios       HotelFolio[]
   hotelPayments     HotelPayment[]
+
+  // ✅ Reloj Checador (NUEVO)
+  workDays          WorkDay[]
 }
 
 model Shift {
@@ -795,4 +798,54 @@ model HotelPayment {
 
   @@index([folioId, createdAt])
   @@index([businessId, createdAt])
+}
+
+// ==============================
+// ✅ MÓDULO DE ASISTENCIAS (RELOJ CHECADOR)
+// ==============================
+
+model WorkDay {
+  id           String        @id @default(cuid())
+  userId       String
+  user         User          @relation(fields: [userId], references: [id])
+  date         DateTime      @db.Date
+  status       WorkDayStatus @default(OPEN)
+  totalMinutes Int           @default(0) 
+
+  punches      TimePunch[]
+  
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model TimePunch {
+  id         String    @id @default(cuid())
+  workDayId  String
+  workDay    WorkDay   @relation(fields: [workDayId], references: [id])
+  
+  type       PunchType 
+  timestamp  DateTime  @default(now())
+  
+  photoUrl   String?   
+  gpsLat     Float?    
+  gpsLng     Float?    
+  deviceType String    // "KIOSK" (Tablet sucursal) o "MOBILE" (Celular personal)
+  
+  note       String?   
+  isAdjusted Boolean   @default(false) 
+}
+
+enum WorkDayStatus {
+  OPEN
+  NEEDS_REVIEW
+  APPROVED
+}
+
+enum PunchType {
+  ENTRADA
+  INICIO_COMIDA
+  FIN_COMIDA
+  INICIO_COMPRAS
+  FIN_COMPRAS
+  SALIDA
 }
