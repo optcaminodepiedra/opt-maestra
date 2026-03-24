@@ -34,6 +34,7 @@ export async function getAdminBoot() {
       id: true,
       fullName: true,
       username: true,
+      email: true,
       role: true,
       isActive: true,
       createdAt: true,
@@ -45,27 +46,78 @@ export async function getAdminBoot() {
   return { businesses, cashpoints, users };
 }
 
-/** =======================
- * USERS
- * ======================= */
+// ==========================================
+// NUEVO: CREAR USUARIO
+// ==========================================
+export async function adminCreateUser(input: {
+  fullName: string;
+  username: string;
+  email?: string;
+  role: string;
+  primaryBusinessId?: string | null;
+}) {
+  const me = await requirePerm("ADMIN_USERS_EDIT");
+
+  if (!input.fullName || !input.username || !input.role) {
+    throw new Error("Faltan datos obligatorios (Nombre, Username, Rol).");
+  }
+
+  if (roleIsHigh(input.role) && me.role !== "MASTER_ADMIN") {
+    throw new Error("Solo MASTER_ADMIN puede crear usuarios de nivel OWNER.");
+  }
+
+  // Verificar que el username no exista
+  const existingUser = await prisma.user.findUnique({ 
+    where: { username: input.username.trim().toLowerCase() } 
+  });
+  
+  if (existingUser) throw new Error("Ese nombre de usuario (username) ya está en uso.");
+
+  // Verificar que el correo no exista
+  if (input.email) {
+    const existingEmail = await prisma.user.findUnique({ 
+      where: { email: input.email.trim().toLowerCase() } 
+    });
+    if (existingEmail) throw new Error("Ese correo electrónico ya está registrado.");
+  }
+
+  // Crear en la base de datos
+  await prisma.user.create({
+    data: {
+      fullName: input.fullName.trim(),
+      username: input.username.trim().toLowerCase(),
+      email: input.email?.trim().toLowerCase() || null,
+      role: input.role,
+      primaryBusinessId: input.primaryBusinessId,
+      password: "123456", // <--- Contraseña temporal por defecto
+      isActive: true,
+    },
+  });
+
+  rv();
+  return true;
+}
+
+// ==========================================
+// ACTUALIZAR USUARIO
+// ==========================================
 export async function adminUpdateUser(input: {
   userId: string;
   role?: string;
   primaryBusinessId?: string | null;
   fullName?: string;
   username?: string;
+  email?: string;
   isActive?: boolean;
 }) {
   const me = await requirePerm("ADMIN_USERS_EDIT");
 
   if (!input.userId) throw new Error("Falta userId");
 
-  // No toques tu propio rol por accidente (opcional; si quieres permitirlo, quita esto)
   if (input.userId === me.id && input.role && input.role !== me.role) {
     throw new Error("No puedes cambiar tu propio rol.");
   }
 
-  // Solo MASTER_ADMIN puede asignar OWNER o MASTER_ADMIN
   if (input.role && roleIsHigh(input.role) && me.role !== "MASTER_ADMIN") {
     throw new Error("Solo MASTER_ADMIN puede asignar OWNER/MASTER_ADMIN.");
   }
@@ -76,6 +128,7 @@ export async function adminUpdateUser(input: {
   if (input.primaryBusinessId !== undefined) data.primaryBusinessId = input.primaryBusinessId;
   if (typeof input.fullName === "string") data.fullName = input.fullName.trim();
   if (typeof input.username === "string") data.username = input.username.trim().toLowerCase();
+  if (typeof input.email === "string") data.email = input.email.trim().toLowerCase();
   if (typeof input.isActive === "boolean") data.isActive = input.isActive;
 
   await prisma.user.update({
@@ -87,9 +140,6 @@ export async function adminUpdateUser(input: {
   return true;
 }
 
-/**
- * ✅ Recomendado: desactivar usuario (en vez de borrar)
- */
 export async function adminDeactivateUser(userId: string) {
   const me = await requirePerm("ADMIN_USERS_EDIT");
   if (!userId) throw new Error("Falta userId");
@@ -100,15 +150,11 @@ export async function adminDeactivateUser(userId: string) {
   return true;
 }
 
-/**
- * ⚠️ Borrado definitivo (solo si de verdad lo quieres)
- */
 export async function adminDeleteUser(userId: string) {
   const me = await requirePerm("ADMIN_USERS_DELETE");
   if (!userId) throw new Error("Falta userId");
   if (userId === me.id) throw new Error("No puedes eliminarte tú mismo.");
 
-  // opcional: evita borrar el último MASTER_ADMIN
   const target = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
   if (target?.role === "MASTER_ADMIN") {
     const count = await prisma.user.count({ where: { role: "MASTER_ADMIN", isActive: true } });

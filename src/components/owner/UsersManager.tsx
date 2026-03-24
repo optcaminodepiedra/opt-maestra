@@ -3,8 +3,8 @@
 import * as React from "react";
 import {
   adminDeleteUser,
-  adminDeactivateUser,
   adminUpdateUser,
+  adminCreateUser, // <--- Importamos la nueva función
 } from "@/lib/admin.actions";
 import { hasPermission } from "@/lib/rbac";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,6 +15,9 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
+import { Edit, Trash2, PlusCircle } from "lucide-react";
 
 type Boot = {
   businesses: { id: string; name: string }[];
@@ -22,6 +25,7 @@ type Boot = {
     id: string;
     fullName: string;
     username: string;
+    email: string | null;
     role: string;
     isActive: boolean;
     primaryBusinessId: string | null;
@@ -52,213 +56,338 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
   const canDelete = hasPermission(me.role, "ADMIN_USERS_DELETE");
 
   const [q, setQ] = React.useState("");
+  
+  // Estados para Edición
+  const [editingUser, setEditingUser] = React.useState<any>(null);
+  const [formData, setFormData] = React.useState<any>({});
+  
+  // Estados para Creación
+  const [isCreating, setIsCreating] = React.useState(false);
+  const [newData, setNewData] = React.useState<any>({
+    fullName: "",
+    username: "",
+    email: "",
+    role: "STAFF_WAITER",
+    primaryBusinessId: "__NONE__"
+  });
+
+  const [isSaving, setIsSaving] = React.useState(false);
 
   const filtered = React.useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return users;
 
     return users.filter((u) => {
-      const s = `${u.fullName} ${u.username} ${u.role}`.toLowerCase();
+      const s = `${u.fullName} ${u.email} ${u.username} ${u.role}`.toLowerCase();
       return s.includes(needle);
     });
   }, [users, q]);
 
-  async function saveUser(userId: string, patch: any) {
-    if (!canEdit) return alert("No tienes permiso para editar usuarios.");
-    try {
-      await adminUpdateUser({ userId, ...patch });
-      alert("Guardado");
-    } catch (e: any) {
-      alert(e?.message || "Error al guardar");
-    }
+  // ==============================
+  // FUNCIONES DE EDICIÓN
+  // ==============================
+  function openEditModal(user: any) {
+    setEditingUser(user);
+    setFormData({
+      fullName: user.fullName,
+      email: user.email || "",
+      username: user.username,
+      role: user.role,
+      primaryBusinessId: user.primaryBusinessId || "__NONE__",
+      isActive: user.isActive,
+    });
   }
 
-  async function deactivateUser(userId: string) {
-    if (!canEdit) return alert("No tienes permiso.");
-    if (!confirm("¿Desactivar usuario? (ya no podrá iniciar sesión)")) return;
+  async function handleSaveEdit() {
+    if (!canEdit) return alert("No tienes permiso para editar.");
+    setIsSaving(true);
     try {
-      await adminDeactivateUser(userId);
-      alert("Desactivado");
+      await adminUpdateUser({
+        userId: editingUser.id,
+        fullName: formData.fullName,
+        email: formData.email,
+        username: formData.username,
+        role: formData.role,
+        primaryBusinessId: formData.primaryBusinessId === "__NONE__" ? null : formData.primaryBusinessId,
+        isActive: formData.isActive,
+      });
+      setEditingUser(null);
     } catch (e: any) {
-      alert(e?.message || "Error");
+      alert(e?.message || "Error al guardar");
+    } finally {
+      setIsSaving(false);
     }
   }
 
   async function deleteUser(userId: string) {
-    if (!canDelete) return alert("No tienes permiso para eliminar usuarios.");
-    if (!confirm("¿Eliminar usuario DEFINITIVAMENTE?")) return;
+    if (!canDelete) return alert("No tienes permiso para eliminar.");
+    if (!confirm("¿Eliminar usuario DEFINITIVAMENTE? Esta acción no se puede deshacer.")) return;
 
     try {
       await adminDeleteUser(userId);
-      alert("Eliminado");
+      setEditingUser(null);
     } catch (e: any) {
       alert(e?.message || "Error al eliminar");
     }
   }
 
-  if (!canView) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Usuarios</CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm text-muted-foreground">
-          No tienes permiso para ver este módulo.
-        </CardContent>
-      </Card>
-    );
+  // ==============================
+  // FUNCIONES DE CREACIÓN
+  // ==============================
+  async function handleCreate() {
+    if (!canEdit) return alert("No tienes permiso para crear usuarios.");
+    if (!newData.fullName || !newData.username) {
+      return alert("El nombre y el username son obligatorios.");
+    }
+
+    setIsSaving(true);
+    try {
+      await adminCreateUser({
+        fullName: newData.fullName,
+        username: newData.username,
+        email: newData.email,
+        role: newData.role,
+        primaryBusinessId: newData.primaryBusinessId === "__NONE__" ? null : newData.primaryBusinessId,
+      });
+      setIsCreating(false);
+      setNewData({ fullName: "", username: "", email: "", role: "STAFF_WAITER", primaryBusinessId: "__NONE__" });
+    } catch (e: any) {
+      alert(e?.message || "Error al crear usuario");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
+  if (!canView) return <div>No tienes permiso para ver este módulo.</div>;
+
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between gap-2">
-          <CardTitle className="text-base">Usuarios</CardTitle>
-          <Badge variant="secondary">{filtered.length} usuarios</Badge>
-        </div>
-      </CardHeader>
-
-      <CardContent className="space-y-4">
-        <div className="grid gap-3 md:grid-cols-[1fr_auto] items-end">
-          <div className="space-y-2">
-            <Label>Buscar</Label>
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Nombre / username / rol…" />
+    <>
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-base">Directorio de Usuarios</CardTitle>
+              <Badge variant="secondary">{filtered.length} usuarios</Badge>
+            </div>
+            
+            {/* EL NUEVO BOTÓN PARA CREAR */}
+            <Button size="sm" onClick={() => setIsCreating(true)} disabled={!canEdit} className="bg-primary hover:bg-primary/90">
+              <PlusCircle className="w-4 h-4 mr-2" />
+              Nuevo Usuario
+            </Button>
           </div>
-          <div className="text-xs text-muted-foreground">
-            {canEdit ? <>Puedes editar usuarios.</> : <>Solo lectura.</>}
+        </CardHeader>
+
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-[1fr_auto] items-end">
+            <div className="space-y-2">
+              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por nombre, correo, username o rol..." className="max-w-sm" />
+            </div>
           </div>
-        </div>
 
-        <Separator />
+          <Separator />
 
-        <div className="rounded-lg border overflow-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Usuario</TableHead>
-                <TableHead>Rol</TableHead>
-                <TableHead>Unidad principal</TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead className="text-right">Acciones</TableHead>
-              </TableRow>
-            </TableHeader>
-
-            <TableBody>
-              {filtered.map((u) => (
-                <TableRow key={u.id}>
-                  <TableCell className="min-w-[320px]">
-                    <div className="font-medium">{u.fullName}</div>
-                    <div className="text-xs text-muted-foreground">@{u.username}</div>
-                    <div className="text-[10px] text-muted-foreground mt-1">id: {u.id}</div>
-                  </TableCell>
-
-                  <TableCell className="min-w-[220px]">
-                    <Select
-                      value={u.role}
-                      onValueChange={(v) => saveUser(u.id, { role: v })}
-                      disabled={!canEdit}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ROLES.map((r) => (
-                          <SelectItem key={r} value={r}>
-                            {r}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
-
-                  <TableCell className="min-w-[260px]">
-                    <Select
-                      value={u.primaryBusinessId || "__NONE__"}
-                      onValueChange={(v) =>
-                        saveUser(u.id, { primaryBusinessId: v === "__NONE__" ? null : v })
-                      }
-                      disabled={!canEdit}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="(sin unidad)" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__NONE__">(sin unidad)</SelectItem>
-                        {businesses.map((b) => (
-                          <SelectItem key={b.id} value={b.id}>
-                            {b.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <div className="text-[11px] text-muted-foreground mt-1">
-                      Staff normalmente queda fijo a su unidad.
-                    </div>
-                  </TableCell>
-
-                  <TableCell className="min-w-[120px]">
-                    <Badge variant={u.isActive ? "secondary" : "destructive"}>
-                      {u.isActive ? "Activo" : "Inactivo"}
-                    </Badge>
-                  </TableCell>
-
-                  <TableCell className="text-right min-w-[320px]">
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        variant="outline"
-                        disabled={!canEdit}
-                        onClick={() => {
-                          const v = prompt("Nombre completo:", u.fullName) ?? "";
-                          if (!v.trim()) return;
-                          saveUser(u.id, { fullName: v.trim() });
-                        }}
-                      >
-                        Renombrar
-                      </Button>
-
-                      <Button
-                        variant="outline"
-                        disabled={!canEdit}
-                        onClick={() => {
-                          const v = prompt("Username (sin espacios):", u.username) ?? "";
-                          if (!v.trim()) return;
-                          saveUser(u.id, { username: v.trim().toLowerCase() });
-                        }}
-                      >
-                        Username
-                      </Button>
-
-                      <Button
-                        variant="secondary"
-                        disabled={!canEdit || !u.isActive}
-                        onClick={() => deactivateUser(u.id)}
-                      >
-                        Desactivar
-                      </Button>
-
-                      <Button
-                        variant="destructive"
-                        disabled={!canDelete}
-                        onClick={() => deleteUser(u.id)}
-                      >
-                        Eliminar
-                      </Button>
-                    </div>
-                  </TableCell>
+          <div className="rounded-lg border overflow-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/50">
+                  <TableHead>Usuario</TableHead>
+                  <TableHead>Contacto</TableHead>
+                  <TableHead>Rol Asignado</TableHead>
+                  <TableHead>Unidad Principal</TableHead>
+                  <TableHead>Estado</TableHead>
+                  <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
-              ))}
+              </TableHeader>
+              <TableBody>
+                {filtered.map((u) => {
+                  const businessName = businesses.find(b => b.id === u.primaryBusinessId)?.name || "—";
+                  
+                  return (
+                    <TableRow key={u.id} className="hover:bg-muted/30">
+                      <TableCell>
+                        <div className="font-semibold">{u.fullName}</div>
+                        <div className="text-xs text-muted-foreground">@{u.username}</div>
+                      </TableCell>
+                      
+                      <TableCell>
+                        <div className="text-sm">{u.email || "Sin correo"}</div>
+                      </TableCell>
 
-              {filtered.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="text-sm text-muted-foreground">
-                    No hay usuarios con ese filtro.
-                  </TableCell>
-                </TableRow>
-              ) : null}
-            </TableBody>
-          </Table>
-        </div>
-      </CardContent>
-    </Card>
+                      <TableCell>
+                        <Badge variant="outline" className="font-normal bg-blue-50 text-blue-700 border-blue-200">
+                          {u.role}
+                        </Badge>
+                      </TableCell>
+
+                      <TableCell className="text-sm text-muted-foreground font-medium">
+                        {businessName}
+                      </TableCell>
+
+                      <TableCell>
+                        <Badge variant={u.isActive ? "secondary" : "destructive"} className="font-normal">
+                          {u.isActive ? "Activo" : "Inactivo"}
+                        </Badge>
+                      </TableCell>
+
+                      <TableCell className="text-right">
+                        <Button variant="outline" size="sm" onClick={() => openEditModal(u)} disabled={!canEdit}>
+                          <Edit className="w-4 h-4 mr-2" />
+                          Editar
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ======================================= */}
+      {/* MODAL PARA EDITAR USUARIO (EXISTENTE)   */}
+      {/* ======================================= */}
+      <Dialog open={!!editingUser} onOpenChange={(open) => !open && setEditingUser(null)}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Editar Perfil de Usuario</DialogTitle>
+          </DialogHeader>
+
+          {editingUser && (
+            <div className="grid gap-4 py-4">
+              <div className="flex items-center justify-between border-b pb-4">
+                <div className="space-y-0.5">
+                  <Label>Acceso al Sistema</Label>
+                  <div className="text-xs text-muted-foreground">Permite o bloquea el inicio de sesión.</div>
+                </div>
+                <Switch 
+                  checked={formData.isActive} 
+                  onCheckedChange={(v) => setFormData({ ...formData, isActive: v })} 
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Nombre Completo</Label>
+                  <Input value={formData.fullName} onChange={(e) => setFormData({ ...formData, fullName: e.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Username</Label>
+                  <Input value={formData.username} onChange={(e) => setFormData({ ...formData, username: e.target.value })} />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Correo Electrónico (Login)</Label>
+                <Input type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} placeholder="usuario@correo.com" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Rol</Label>
+                  <Select value={formData.role} onValueChange={(v) => setFormData({ ...formData, role: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div className="space-y-2">
+                  <Label>Unidad Principal</Label>
+                  <Select value={formData.primaryBusinessId} onValueChange={(v) => setFormData({ ...formData, primaryBusinessId: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__NONE__">(Sin unidad fija)</SelectItem>
+                      {businesses.map((b) => (
+                        <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="flex items-center justify-between sm:justify-between w-full">
+            <Button variant="ghost" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={() => deleteUser(editingUser.id)}>
+              <Trash2 className="w-4 h-4 mr-2" /> Eliminar Cuenta
+            </Button>
+            
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setEditingUser(null)}>Cancelar</Button>
+              <Button onClick={handleSaveEdit} disabled={isSaving}>
+                {isSaving ? "Guardando..." : "Guardar Cambios"}
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ======================================= */}
+      {/* MODAL PARA CREAR NUEVO USUARIO          */}
+      {/* ======================================= */}
+      <Dialog open={isCreating} onOpenChange={setIsCreating}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Registrar Nuevo Usuario</DialogTitle>
+            <DialogDescription>
+              La contraseña por defecto será <strong>123456</strong>. El usuario podrá cambiarla después.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Nombre Completo</Label>
+                <Input value={newData.fullName} onChange={(e) => setNewData({ ...newData, fullName: e.target.value })} placeholder="Ej. Fulano Perez" />
+              </div>
+              <div className="space-y-2">
+                <Label>Username</Label>
+                <Input value={newData.username} onChange={(e) => setNewData({ ...newData, username: e.target.value })} placeholder="Fulanito" />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Correo Electrónico (Opcional pero recomendado)</Label>
+              <Input type="email" value={newData.email} onChange={(e) => setNewData({ ...newData, email: e.target.value })} placeholder="fulano@ejemplo.com" />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Rol</Label>
+                <Select value={newData.role} onValueChange={(v) => setNewData({ ...newData, role: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="space-y-2">
+                <Label>Unidad Principal</Label>
+                <Select value={newData.primaryBusinessId} onValueChange={(v) => setNewData({ ...newData, primaryBusinessId: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__NONE__">(Sin unidad fija)</SelectItem>
+                    {businesses.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setIsCreating(false)}>Cancelar</Button>
+            <Button onClick={handleCreate} disabled={isSaving}>
+              {isSaving ? "Creando..." : "Crear Usuario"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
