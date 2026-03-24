@@ -50,6 +50,7 @@ export function getNavByRole(role: string): NavSection[] {
   const personal: NavSection = sec("Mi Espacio", [
     { label: "Reloj Checador", href: "/app/reloj", icon: "reloj" },
     { label: "Mis Tareas", href: "/app/ops/kanban/activities", icon: "kanban" },
+    { label: "Tickets", href: "/app/ops/kanban/tickets", icon: "tasks" },
   ], "users");
 
   // ==========================================

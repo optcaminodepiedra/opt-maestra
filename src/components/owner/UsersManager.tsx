@@ -37,14 +37,27 @@ type Boot = {
 const ROLES = [
   "MASTER_ADMIN",
   "OWNER",
-  "SUPERIOR",
-  "MANAGER",
+  "MANAGER_OPS",
   "ACCOUNTING",
+  "SALES",
+  "RESERVATIONS",
+  "INVENTORY",
+  "STAFF_MAINTENANCE",
+  "MANAGER_RESTAURANT",
+  "STAFF_CASHIER",
   "STAFF_WAITER",
   "STAFF_BAR",
   "STAFF_KITCHEN",
+  "MANAGER_HOTEL",
   "STAFF_RECEPTION",
+  "STAFF_HOUSEKEEPING",
+  "MANAGER_RANCH",
   "STAFF_EXPERIENCES",
+  "STAFF_FIELD",
+  "STAFF_STORE",
+  // Roles antiguos por compatibilidad:
+  "SUPERIOR",
+  "MANAGER"
 ];
 
 export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?: string } }) {
