@@ -65,7 +65,7 @@ export function getNavByRole(role: string): NavSection[] {
       { label: "Museos", href: "/app/museums", icon: "museum", badge: "Próx" },
       { label: "Aventura / Rancho", href: "/app/adventure", icon: "adventure", badge: "Próx" },
       { label: "Inventario", href: "/app/inventory", icon: "inventory", badge: "Beta" },
-      { label: "Nómina", href: "/app/payroll", icon: "payroll", badge: "Próx" },
+      { label: "Nómina", href: "/app/payroll", icon: "payroll" },
       { label: "IoT / Flotilla", href: "/app/iot", icon: "iot", badge: "Próx" },
       { label: "Hotel · Dashboard", href: "/app/hotel/dashboard", icon: "hotel", badge: "Beta" },
       { label: "Hotel · Calendario", href: "/app/hotel/calendar", icon: "hotel", badge: "Beta" },
