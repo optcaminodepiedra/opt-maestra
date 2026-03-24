@@ -4,16 +4,17 @@ import { useState, useRef, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Camera, MapPin, Send, Loader2 } from "lucide-react";
+import { Camera, MapPin, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { registerTimePunch } from "@/lib/timeclock.actions";
-import { PunchType } from "@prisma/client";
+
+// Define PunchType locally since it's not exported from @prisma/client
+type PunchType = "ENTRADA" | "SALIDA" | "INICIO_COMIDA" | "FIN_COMIDA";
 
 export default function MobileClockPage() {
   const { data: session } = useSession();
-  const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -56,7 +57,7 @@ export default function MobileClockPage() {
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (pos) => setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-        (err) => toast.error("Por favor activa tu GPS para checar.")
+        () => toast.error("Por favor activa tu GPS para checar.")
       );
     }
   };
@@ -85,14 +86,14 @@ export default function MobileClockPage() {
   const handleSubmit = async (type: PunchType) => {
     if (!photo) return toast.error("Debes tomarte la foto primero");
     if (!location) return toast.error("Esperando señal de GPS...");
-    if (!session?.user?.id) return toast.error("Error de sesión");
+    if (!session?.user?.email) return toast.error("Error de sesión");
 
     setLoading(true);
     setPunchType(type);
 
     try {
       await registerTimePunch({
-        userId: session.user.id,
+        userId: session.user.email, // Use email as unique identifier
         type: type,
         photoBase64: photo,
         lat: location.lat,
