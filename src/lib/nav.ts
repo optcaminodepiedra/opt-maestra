@@ -97,10 +97,11 @@ export function getNavByRole(role: string): NavSection[] {
     { label: "Pantalla KDS", href: "/app/restaurant/kds", icon: "kds" },
   ], "restaurant");
 
-  // -- HOTEL Y RESERVAS --
+// -- HOTEL Y RESERVAS --
   const hotelAdmin: NavSection = sec("Hotel & Reservas", [
     { label: "Dashboard", href: "/app/hotel/dashboard", icon: "dashboard" },
     { label: "Calendario", href: "/app/hotel/calendar", icon: "hotel" },
+    { label: "Habitaciones", href: "/app/hotel/rooms", icon: "hotel" }, // <--- AGREGADO AQUÍ
     { label: "Folios y Cuentas", href: "/app/hotel/folio", icon: "reports" as any }, 
   ], "hotel");
 
