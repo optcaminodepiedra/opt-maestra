@@ -33,6 +33,7 @@ import {
   BadgeDollarSign,
   RadioTower,
   AppWindow,
+  Clock
 } from "lucide-react";
 
 const iconMap: Record<IconName, any> = {
@@ -48,6 +49,7 @@ const iconMap: Record<IconName, any> = {
   kanban: KanbanSquare,
 
   apps: AppWindow,
+  reloj: Clock,
 
   restaurant: UtensilsCrossed,
   pos: ShoppingCart,

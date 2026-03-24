@@ -3,18 +3,16 @@
 import { useState, useRef, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
-import { Camera, MapPin, Loader2 } from "lucide-react";
+import { Camera, MapPin, Loader2, CheckCircle2, AlertTriangle, Home } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { registerTimePunch } from "@/lib/timeclock.actions";
-
-// Define PunchType locally since it's not exported from @prisma/client
-type PunchType = "ENTRADA" | "SALIDA" | "INICIO_COMIDA" | "FIN_COMIDA";
+import { PunchType } from "@prisma/client";
 
 export default function MobileClockPage() {
   const { data: session } = useSession();
+  const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -22,26 +20,26 @@ export default function MobileClockPage() {
   const [note, setNote] = useState("");
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [punchType, setPunchType] = useState<PunchType | null>(null);
+  
+  // Estados para nuestra nueva pantalla de confirmación/error
+  const [successState, setSuccessState] = useState<{ type: string; time: string } | null>(null);
+  const [errorState, setErrorState] = useState<string | null>(null);
 
-  // Iniciar la cámara y obtener GPS al cargar
   useEffect(() => {
     startCamera();
     getLocation();
-    return () => stopCamera(); // Apagar cámara al salir
+    return () => stopCamera();
   }, []);
 
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user" }, // "user" es frontal, "environment" es trasera
-      });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         setIsCameraActive(true);
       }
     } catch (err) {
-      toast.error("No se pudo acceder a la cámara. Revisa los permisos.");
+      setErrorState("No se pudo acceder a la cámara. Por favor, da los permisos necesarios en tu navegador.");
     }
   };
 
@@ -57,7 +55,7 @@ export default function MobileClockPage() {
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (pos) => setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-        () => toast.error("Por favor activa tu GPS para checar.")
+        (err) => setErrorState("No pudimos obtener tu ubicación. El GPS es obligatorio para checar.")
       );
     }
   };
@@ -70,9 +68,7 @@ export default function MobileClockPage() {
       const ctx = canvas.getContext("2d");
       if (ctx) {
         ctx.drawImage(videoRef.current, 0, 0);
-        // Comprimimos la imagen a JPEG calidad 0.7 para no saturar la base de datos
-        const base64 = canvas.toDataURL("image/jpeg", 0.7);
-        setPhoto(base64);
+        setPhoto(canvas.toDataURL("image/jpeg", 0.7));
         stopCamera();
       }
     }
@@ -84,16 +80,19 @@ export default function MobileClockPage() {
   };
 
   const handleSubmit = async (type: PunchType) => {
-    if (!photo) return toast.error("Debes tomarte la foto primero");
-    if (!location) return toast.error("Esperando señal de GPS...");
-    if (!session?.user?.email) return toast.error("Error de sesión");
+    if (!photo) return setErrorState("Debes tomarte la foto de evidencia primero.");
+    if (!location) return setErrorState("Aún no tenemos tu ubicación GPS.");
+    
+    // Verificamos que tengamos tu correo en la sesión actual
+    if (!session?.user?.email) return setErrorState("No hay una sesión activa con tu correo.");
 
     setLoading(true);
-    setPunchType(type);
+    setErrorState(null);
 
     try {
+      // Mandamos tu correo al servidor
       await registerTimePunch({
-        userId: session.user.email, // Use email as unique identifier
+        userEmail: session.user.email,
         type: type,
         photoBase64: photo,
         lat: location.lat,
@@ -102,17 +101,48 @@ export default function MobileClockPage() {
         deviceType: "MOBILE",
       });
 
-      toast.success(`¡${type} registrada con éxito!`);
-      // Recargar para limpiar
-      setTimeout(() => window.location.reload(), 1500);
+      setSuccessState({
+        type: type,
+        time: new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
+      });
+
     } catch (error: any) {
-      toast.error(error.message || "Error al registrar");
+      setErrorState(error.message || "Ocurrió un error al registrar en la base de datos.");
     } finally {
       setLoading(false);
-      setPunchType(null);
     }
   };
 
+  // ==========================================
+  // PANTALLA DE ÉXITO
+  // ==========================================
+  if (successState) {
+    return (
+      <div className="max-w-md mx-auto p-4 mt-10">
+        <Card className="shadow-2xl border-green-500/20 text-center animate-in fade-in zoom-in duration-300">
+          <CardContent className="pt-10 pb-10 space-y-6">
+            <CheckCircle2 className="w-24 h-24 text-green-500 mx-auto" />
+            <div className="space-y-2">
+              <h2 className="text-3xl font-bold text-green-700">¡Registro Exitoso!</h2>
+              <p className="text-lg text-muted-foreground">
+                Se marcó tu <strong>{successState.type}</strong> a las {successState.time}.
+              </p>
+            </div>
+            <Button 
+              className="w-full h-14 text-lg mt-4" 
+              onClick={() => router.push("/app")}
+            >
+              <Home className="mr-2 h-5 w-5" /> Regresar al Inicio
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // ==========================================
+  // PANTALLA PRINCIPAL DE CAPTURA
+  // ==========================================
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
       <Card className="shadow-lg border-primary/20">
@@ -122,30 +152,33 @@ export default function MobileClockPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           
+          {/* ALERTA DE ERROR */}
+          {errorState && (
+            <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-md flex items-start gap-2 text-sm animate-in slide-in-from-top-2">
+              <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="font-medium">Error en el registro</p>
+                <p>{errorState}</p>
+              </div>
+            </div>
+          )}
+
           {/* VISOR DE CÁMARA */}
           <div className="relative rounded-xl overflow-hidden bg-black aspect-[3/4] flex items-center justify-center border-2 border-muted">
             {!photo ? (
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                className="w-full h-full object-cover"
-              />
+              <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
             ) : (
               <img src={photo} alt="Evidencia" className="w-full h-full object-cover" />
             )}
-
-            {/* Status del GPS Flotante */}
             <div className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2 py-1 rounded-md flex items-center gap-1 backdrop-blur-sm">
               <MapPin className="w-3 h-3" />
               {location ? "GPS Activo" : "Buscando GPS..."}
             </div>
           </div>
 
-          {/* BOTÓN CAPTURAR FOTO */}
           {!photo ? (
             <Button onClick={takePhoto} className="w-full h-12 text-lg" disabled={!isCameraActive}>
-              <Camera className="mr-2 h-5 w-5" /> Tomar Foto Evidencia
+              <Camera className="mr-2 h-5 w-5" /> Tomar Foto
             </Button>
           ) : (
             <Button onClick={retakePhoto} variant="outline" className="w-full">
@@ -153,37 +186,33 @@ export default function MobileClockPage() {
             </Button>
           )}
 
-          {/* CAMPO DE NOTAS */}
           <div className="space-y-1">
             <label className="text-xs font-medium text-muted-foreground">Notas (Opcional)</label>
             <Input 
-              placeholder="Ej. Me mandaron a compras, cubriendo en Bodega 4..." 
+              placeholder="Ej. Fui por insumos..." 
               value={note}
               onChange={(e) => setNote(e.target.value)}
               disabled={loading}
             />
           </div>
 
-          {/* BOTONES DE REGISTRO */}
+          {/* BOTONES */}
           <div className="grid grid-cols-2 gap-2 pt-2">
             <Button 
-              variant="default" 
-              className="bg-green-600 hover:bg-green-700 h-14"
+              className="bg-green-600 hover:bg-green-700 h-14 font-bold text-lg"
               disabled={!photo || !location || loading}
               onClick={() => handleSubmit("ENTRADA")}
             >
-              {loading && punchType === "ENTRADA" ? <Loader2 className="animate-spin" /> : "ENTRADA"}
+              {loading ? <Loader2 className="animate-spin" /> : "ENTRADA"}
             </Button>
-
             <Button 
               variant="destructive" 
-              className="h-14"
+              className="h-14 font-bold text-lg"
               disabled={!photo || !location || loading}
               onClick={() => handleSubmit("SALIDA")}
             >
-              {loading && punchType === "SALIDA" ? <Loader2 className="animate-spin" /> : "SALIDA"}
+              {loading ? <Loader2 className="animate-spin" /> : "SALIDA"}
             </Button>
-
             <Button 
               variant="outline" 
               className="border-blue-200 hover:bg-blue-50 text-blue-700"
@@ -192,7 +221,6 @@ export default function MobileClockPage() {
             >
               SALIDA COMIDA
             </Button>
-
             <Button 
               variant="outline" 
               className="border-blue-200 hover:bg-blue-50 text-blue-700"
@@ -202,7 +230,6 @@ export default function MobileClockPage() {
               REGRESO COMIDA
             </Button>
           </div>
-
         </CardContent>
       </Card>
     </div>
