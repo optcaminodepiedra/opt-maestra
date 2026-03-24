@@ -27,9 +27,12 @@ export default async function OwnerDashboardPage() {
     }
   });
 
-// Tareas pendientes o en progreso (Kanban)
-  // (Filtro temporalmente desactivado para evitar el error)
-  const pendingTasks = await prisma.task.count();
+// Tareas pendientes, en curso o bloqueadas (Kanban y Tickets)
+  const pendingTasks = await prisma.task.count({
+    where: {
+      status: { in: ["TODO", "DOING", "BLOCKED"] }
+    }
+  });
 
   // (Aquí después conectaremos las ventas y el hotel reales)
   const dummySales = "$ 14,520.00";
