@@ -20,10 +20,10 @@ export default async function OwnerDashboardPage() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   
-  const activeStaff = await prisma.workDay.count({
+const activeStaff = await prisma.workDay.count({
     where: { 
       date: { gte: today },
-      status: "OPEN" 
+      status: { in: ["OPEN", "NEEDS_REVIEW"] } 
     }
   });
 
