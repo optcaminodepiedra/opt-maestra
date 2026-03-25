@@ -1,16 +1,15 @@
 "use client";
 
-import React, { useState } from "react"; // <--- ESTA ES LA LÍNEA MÁGICA
+import React, { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { MapPin, Clock, ChevronDown, ChevronUp, CheckCircle, AlertCircle } from "lucide-react";
-// Importaremos tu acción para aprobar (la crearemos en el siguiente paso)
-// import { approveWorkDay } from "@/lib/payroll.actions"; 
+import { MapPin, Clock, ChevronDown, ChevronUp, CheckCircle, Trash2 } from "lucide-react";
+import { approveWorkDay, deleteWorkDay } from "@/lib/payroll.actions";
 
 export default function PayrollTable({ records }: { records: any[] }) {
-  // Estado para saber qué filas están expandidas (guardamos los IDs)
   const [expandedRows, setExpandedRows] = useState<string[]>([]);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
 
   const toggleRow = (id: string) => {
     setExpandedRows((prev) => 
@@ -19,10 +18,27 @@ export default function PayrollTable({ records }: { records: any[] }) {
   };
 
   const handleApprove = async (id: string) => {
-    if (!confirm("¿Aprobar este día de trabajo?")) return;
-    // await approveWorkDay(id);
-    alert("Acción conectada próximamente");
-    // window.location.reload();
+    if (!confirm("¿Estás seguro de APROBAR este día de trabajo para nómina?")) return;
+    setLoadingId(id);
+    try {
+      await approveWorkDay(id);
+    } catch (error) {
+      alert("Error al aprobar el registro.");
+    } finally {
+      setLoadingId(null);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("⚠️ ¿ELIMINAR DEFINITIVAMENTE este registro? Esta acción borrará las fotos y mapas asociados. Úsalo solo para pruebas o errores.")) return;
+    setLoadingId(id);
+    try {
+      await deleteWorkDay(id);
+    } catch (error) {
+      alert("Error al eliminar el registro.");
+    } finally {
+      setLoadingId(null);
+    }
   };
 
   return (
@@ -35,12 +51,13 @@ export default function PayrollTable({ records }: { records: any[] }) {
                 <th className="px-6 py-4 font-medium w-48">Empleado</th>
                 <th className="px-6 py-4 font-medium w-32">Fecha / Estado</th>
                 <th className="px-6 py-4 font-medium">Resumen</th>
-                <th className="px-6 py-4 font-medium text-right w-40">Acciones</th>
+                <th className="px-6 py-4 font-medium text-right w-52">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {records.map((day) => {
                 const isExpanded = expandedRows.includes(day.id);
+                const isLoading = loadingId === day.id;
                 const entrada = day.punches.find((p: any) => p.type === "ENTRADA");
                 const salida = day.punches.find((p: any) => p.type === "SALIDA");
                 const numPunches = day.punches.length;
@@ -54,11 +71,11 @@ export default function PayrollTable({ records }: { records: any[] }) {
 
                 return (
                   <React.Fragment key={day.id}>
-                    {/* FILA PRINCIPAL (Siempre visible) */}
-                    <tr className={`hover:bg-muted/10 transition-colors ${isExpanded ? 'bg-muted/5' : ''}`}>
+                    {/* FILA PRINCIPAL */}
+                    <tr className={`hover:bg-muted/10 transition-colors ${isExpanded ? 'bg-muted/5' : ''} ${isLoading ? 'opacity-50' : ''}`}>
                       <td className="px-6 py-4 font-medium cursor-pointer" onClick={() => toggleRow(day.id)}>
-                        <div className="text-base">{day.user.fullName || "Sin nombre"}</div>
-                        <div className="text-xs text-muted-foreground font-normal">{day.user.email}</div>
+                        <div className="text-base">{day.user?.fullName || "Sin nombre"}</div>
+                        <div className="text-xs text-muted-foreground font-normal">{day.user?.email || "Sin correo"}</div>
                       </td>
                       
                       <td className="px-6 py-4 cursor-pointer" onClick={() => toggleRow(day.id)}>
@@ -82,10 +99,13 @@ export default function PayrollTable({ records }: { records: any[] }) {
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">
                           {day.status === "NEEDS_REVIEW" && (
-                            <Button size="sm" variant="outline" className="text-green-600 border-green-200 hover:bg-green-50" onClick={() => handleApprove(day.id)}>
-                              <CheckCircle className="w-4 h-4 mr-1" /> Aprobar
+                            <Button size="sm" variant="outline" className="text-green-600 border-green-200 hover:bg-green-50" onClick={() => handleApprove(day.id)} disabled={isLoading}>
+                              <CheckCircle className="w-4 h-4" />
                             </Button>
                           )}
+                          <Button size="sm" variant="outline" className="text-red-600 border-red-200 hover:bg-red-50" onClick={() => handleDelete(day.id)} disabled={isLoading}>
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
                           <Button size="sm" variant="ghost" onClick={() => toggleRow(day.id)}>
                             {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                           </Button>
