@@ -1,61 +1,144 @@
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
-import { redirect } from "next/navigation";
-import { prisma } from "@/lib/prisma";
-import LedgerTable from "./LedgerTable";
+"use client";
 
-export default async function LedgerPage() {
-  const session = await getServerSession(authOptions);
-  if (!session?.user) redirect("/login");
+import React, { useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { DollarSign, TrendingDown, Search, Filter } from "lucide-react";
 
-  // Traemos los últimos 150 ingresos y 150 egresos para no saturar la memoria
-  const sales = await prisma.sale.findMany({
-    take: 150,
-    orderBy: { createdAt: "desc" },
-    include: { business: true, user: true }
+export default function LedgerTable({ data }: { data: any[] }) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterType, setFilterType] = useState<"ALL" | "INCOME" | "EXPENSE">("ALL");
+
+  // Lógica para filtrar en tiempo real
+  const filteredData = data.filter(tx => {
+    const matchesSearch = 
+      tx.concept.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      tx.businessName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      tx.userName.toLowerCase().includes(searchTerm.toLowerCase());
+      
+    const matchesType = filterType === "ALL" || tx.type === filterType;
+    
+    return matchesSearch && matchesType;
   });
 
-  const expenses = await prisma.expense.findMany({
-    take: 150,
-    orderBy: { createdAt: "desc" },
-    include: { business: true, user: true }
-  });
+  const formatMoney = (amount: number) => {
+    return new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(amount);
+  };
 
-  // Unificamos todo en un solo formato estándar para la tabla
-  const unifiedTransactions = [
-    ...sales.map(s => ({
-      id: `sale-${s.id}`,
-      type: "INCOME" as const,
-      concept: s.concept,
-      amount: s.amountCents / 100,
-      date: s.createdAt,
-      businessName: s.business?.name || "General",
-      userName: s.user?.fullName || "Sistema",
-      status: "VERIFIED"
-    })),
-    ...expenses.map(e => ({
-      id: `exp-${e.id}`,
-      type: "EXPENSE" as const,
-      concept: e.category,
-      amount: e.amountCents / 100,
-      date: e.createdAt,
-      businessName: e.business?.name || "General",
-      userName: e.user?.fullName || "Sistema",
-      status: e.evidenceUrl ? "VERIFIED" : "PENDING"
-    }))
-  ].sort((a, b) => b.date.getTime() - a.date.getTime()); // Ordenamos del más nuevo al más viejo
+  const formatDate = (date: Date) => {
+    return new Date(date).toLocaleString("es-MX", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Libro Mayor</h1>
-        <p className="text-muted-foreground mt-1">
-          Historial completo de transacciones, ingresos y egresos de todas las unidades.
-        </p>
-      </div>
-      
-      {/* Pasamos los datos unificados a nuestra tabla interactiva */}
-      <LedgerTable data={unifiedTransactions} />
-    </div>
+    <Card className="shadow-sm">
+      <CardContent className="p-0">
+        
+        {/* BARRA DE HERRAMIENTAS (Buscador y Filtros) */}
+        <div className="p-4 border-b flex flex-col sm:flex-row gap-4 justify-between items-center bg-muted/20">
+          <div className="relative w-full sm:w-96">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input 
+              placeholder="Buscar concepto, sucursal o usuario..." 
+              className="pl-9 bg-white"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+          
+          <div className="flex gap-2 w-full sm:w-auto overflow-x-auto">
+            <Button 
+              variant={filterType === "ALL" ? "default" : "outline"} 
+              size="sm" 
+              onClick={() => setFilterType("ALL")}
+            >
+              Todos
+            </Button>
+            <Button 
+              variant={filterType === "INCOME" ? "default" : "outline"} 
+              size="sm" 
+              className={filterType === "INCOME" ? "bg-green-600 hover:bg-green-700 text-white" : "text-green-700"}
+              onClick={() => setFilterType("INCOME")}
+            >
+              <DollarSign className="w-4 h-4 mr-1"/> Ingresos
+            </Button>
+            <Button 
+              variant={filterType === "EXPENSE" ? "default" : "outline"} 
+              size="sm" 
+              className={filterType === "EXPENSE" ? "bg-red-600 hover:bg-red-700 text-white" : "text-red-700"}
+              onClick={() => setFilterType("EXPENSE")}
+            >
+              <TrendingDown className="w-4 h-4 mr-1"/> Egresos
+            </Button>
+          </div>
+        </div>
+
+        {/* TABLA DE MOVIMIENTOS */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left">
+            <thead className="bg-muted/50 text-muted-foreground uppercase text-xs">
+              <tr>
+                <th className="px-6 py-4 font-medium">Concepto</th>
+                <th className="px-6 py-4 font-medium">Sucursal / Usuario</th>
+                <th className="px-6 py-4 font-medium">Fecha</th>
+                <th className="px-6 py-4 font-medium text-right">Monto</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {filteredData.map((tx) => (
+                <tr key={tx.id} className="hover:bg-muted/10 transition-colors">
+                  
+                  {/* CONCEPTO Y TIPO */}
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className={`p-1.5 rounded-full shrink-0 ${tx.type === 'INCOME' ? 'bg-green-100' : 'bg-red-100'}`}>
+                        {tx.type === 'INCOME' 
+                          ? <DollarSign className="h-4 w-4 text-green-600" /> 
+                          : <TrendingDown className="h-4 w-4 text-red-600" />
+                        }
+                      </div>
+                      <div>
+                        <div className="font-semibold capitalize text-base">{tx.concept}</div>
+                        {tx.status === "PENDING" && (
+                          <Badge variant="outline" className="text-[10px] h-4 mt-1 bg-amber-50 text-amber-700 border-amber-200">Sin Ticket</Badge>
+                        )}
+                      </div>
+                    </div>
+                  </td>
+                  
+                  {/* SUCURSAL Y USUARIO */}
+                  <td className="px-6 py-4">
+                    <div className="font-medium">{tx.businessName}</div>
+                    <div className="text-xs text-muted-foreground">{tx.userName}</div>
+                  </td>
+                  
+                  {/* FECHA */}
+                  <td className="px-6 py-4 text-muted-foreground">
+                    {formatDate(tx.date)}
+                  </td>
+
+                  {/* MONTO */}
+                  <td className="px-6 py-4 text-right">
+                    <div className={`font-bold text-lg ${tx.type === 'INCOME' ? 'text-green-600' : 'text-red-600'}`}>
+                      {tx.type === 'INCOME' ? '+' : '-'}{formatMoney(tx.amount)}
+                    </div>
+                  </td>
+                  
+                </tr>
+              ))}
+
+              {filteredData.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-6 py-12 text-center text-muted-foreground text-lg">
+                    No se encontraron transacciones con esos filtros.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
