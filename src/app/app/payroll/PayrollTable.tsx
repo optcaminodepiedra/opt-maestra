@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState, Fragment } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -70,7 +70,7 @@ export default function PayrollTable({ records }: { records: any[] }) {
                 }
 
                 return (
-                  <React.Fragment key={day.id}>
+                  <Fragment key={day.id}>
                     {/* FILA PRINCIPAL */}
                     <tr className={`hover:bg-muted/10 transition-colors ${isExpanded ? 'bg-muted/5' : ''} ${isLoading ? 'opacity-50' : ''}`}>
                       <td className="px-6 py-4 font-medium cursor-pointer" onClick={() => toggleRow(day.id)}>
