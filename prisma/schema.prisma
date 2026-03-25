@@ -833,7 +833,8 @@ model WorkDay {
 model TimePunch {
   id         String    @id @default(cuid())
   workDayId  String
-  workDay    WorkDay   @relation(fields: [workDayId], references: [id])
+  // 👇 SOLO LE AGREGAMOS LA INSTRUCCIÓN AL FINAL DE ESTA LÍNEA 👇
+  workDay    WorkDay   @relation(fields: [workDayId], references: [id], onDelete: Cascade)
   
   type       PunchType 
   timestamp  DateTime  @default(now())

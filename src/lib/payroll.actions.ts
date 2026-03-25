@@ -42,21 +42,17 @@ export async function approveWorkDay(id: string) {
 export async function deleteWorkDay(id: string) {
   if (!id) throw new Error("Falta el ID del registro");
 
-  // Intentamos borrar las fotos/ubicaciones (checadas) asociadas a este día primero
-  try {
-    await prisma.punch.deleteMany({
-      where: { workDayId: id }
-    });
-  } catch (e) {
-    // Si tu base de datos ya borra en cascada automáticamente, ignoramos este paso
-  }
+  // 1. Borramos las checadas usando el nombre real: timePunch
+  await prisma.timePunch.deleteMany({
+    where: { workDayId: id }
+  });
 
-  // Finalmente borramos el registro del día
+  // 2. Ahora sí, borramos el día de trabajo vacío
   await prisma.workDay.delete({
     where: { id }
   });
 
-  // Refrescamos tanto la tabla de nómina como el dashboard ejecutivo
+  // 3. Refrescamos las pantallas
   revalidatePath("/app/payroll");
   revalidatePath("/app/owner");
   return true;
