@@ -862,3 +862,22 @@ enum PunchType {
   FIN_COMPRAS
   SALIDA
 }
+
+// ==============================
+// ✅ CONTABILIDAD Y CIERRES
+// ==============================
+model AccountingPeriod {
+  id          String    @id @default(cuid())
+  month       Int       // 1 = Enero, 12 = Diciembre
+  year        Int       // Ej. 2026
+  
+  isClosed    Boolean   @default(false)
+  closedAt    DateTime?
+  closedByRef String?   // Nombre del usuario que lo cerró
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([year, month]) // Evita que haya dos "Eneros 2026"
+}
+

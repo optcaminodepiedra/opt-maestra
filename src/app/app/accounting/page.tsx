@@ -240,9 +240,9 @@ export default async function AccountingDashboardPage() {
               <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
                   <h4 className="font-semibold text-blue-800 text-sm mb-1">Cierre de Mes</h4>
                   <p className="text-xs text-blue-700 mb-3">El mes actual sigue abierto. Los gerentes pueden registrar gastos atrasados.</p>
-                  <Button size="sm" className="w-full bg-blue-600 hover:bg-blue-700 opacity-50 cursor-not-allowed">
-                      Cerrar Periodo (Pronto)
-                  </Button>
+                  <Button size="sm" className="w-full bg-blue-600 hover:bg-blue-700" asChild>
+    <Link href="/app/accounting/periods">Cerrar Periodos</Link>
+</Button>
               </div>
               
             </div>
