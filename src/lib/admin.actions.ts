@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { hasPermission } from "@/lib/rbac";
 import { getMe } from "@/lib/session";
+import bcrypt from "bcryptjs";
 
 function rv() {
   revalidatePath("/app/owner/users");
@@ -81,6 +82,9 @@ export async function adminCreateUser(input: {
     if (existingEmail) throw new Error("Ese correo electrónico ya está registrado.");
   }
 
+  // 🔐 ENCRIPTAMOS LA CONTRASEÑA POR DEFECTO
+  const hashedPassword = await bcrypt.hash("123456", 10);
+
   // Crear en la base de datos
   await prisma.user.create({
     data: {
@@ -89,7 +93,7 @@ export async function adminCreateUser(input: {
       email: input.email?.trim().toLowerCase() || null,
       role: input.role,
       primaryBusinessId: input.primaryBusinessId,
-      password: "123456", // <--- Contraseña temporal por defecto
+      passwordHash: hashedPassword, // <--- AQUÍ ESTÁ LA SOLUCIÓN
       isActive: true,
     },
   });
