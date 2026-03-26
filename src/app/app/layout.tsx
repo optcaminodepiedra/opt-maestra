@@ -4,17 +4,17 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import ClockInBlocker from "./ClockInBlocker";
 
-// Importaciones según tu estructura de carpetas
+// Importaciones de tus componentes
 import { Sidebar } from "@/components/app/Sidebar"; 
 import { TopBar } from "@/components/app/TopBar";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await getServerSession(authOptions);
   
-  // Si no hay sesión, al login de una
+  // 1. Verificación de sesión
   if (!session?.user) redirect("/login");
 
-  // 1. Obtenemos al usuario completo con los campos necesarios
+  // 2. Obtenemos al usuario completo
   const user = await prisma.user.findUnique({ 
     where: { id: (session as any).user.id },
     select: { 
@@ -23,13 +23,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       requiresClockIn: true, 
       role: true,
       email: true,
-      username: true 
+      username: true,
+      image: true // Por si el TopBar ocupa la foto
     }
   });
 
   if (!user) redirect("/login");
 
-  // 2. Lógica del Reloj Checador
+  // 3. Lógica del Reloj Checador
   let needsToClockIn = false;
   if (user.requiresClockIn) {
     const today = new Date();
@@ -48,17 +49,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     }
   }
 
-  // 3. RENDERIZADO SEGURO
+  // 4. RENDERIZADO CON PASO DE DATOS (PARA EVITAR EL ERROR DEL .MAP)
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      {/* Pasamos la sesión o el user a los componentes por si 
-         ellos hacen el .map() basado en el rol del usuario 
-      */}
-      <Sidebar />
+      {/* Probamos pasando la sesión y el usuario por si acaso uno de los dos es el que falta */}
+      <Sidebar user={user as any} session={session} />
 
       <div className="flex flex-col flex-1 overflow-hidden">
-        {/* Pasamos el objeto user al TopBar por si necesita el nombre/email */}
-        <TopBar />
+        {/* El TopBar suele pedir el usuario para mostrar el nombre/perfil */}
+        <TopBar user={user as any} session={session} />
 
         <main className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-50/50">
           {needsToClockIn ? (
