@@ -255,20 +255,20 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
           {editingUser && (
             <div className="grid gap-4 py-4">
               
-              {/* --- NUEVO BLOQUE: RELOJ OBLIGATORIO --- */}
-              <div className="flex items-center justify-between p-3 border rounded-lg bg-orange-50/50 border-orange-100">
-                <div className="space-y-0.5">
-                  <div className="text-sm font-bold flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-orange-600" />
-                    Asistencia Obligatoria
-                  </div>
-                  <div className="text-xs text-muted-foreground">Exigir reloj checador para entrar al sistema.</div>
-                </div>
-                <Switch 
-                  checked={formData.requiresClockIn} 
-                  onCheckedChange={(v) => setFormData({ ...formData, requiresClockIn: v })} 
-                />
-              </div>
+             {/* --- NUEVO BLOQUE: RELOJ OBLIGATORIO --- */}
+<div className="flex items-center justify-between p-3 border rounded-lg bg-orange-50/50 border-orange-100">
+  <div className="space-y-0.5">
+    <div className="text-sm font-bold flex items-center gap-2">
+      <Clock className="w-4 h-4 text-orange-600" />
+      Asistencia Obligatoria
+    </div>
+    <div className="text-xs text-muted-foreground">Exigir reloj checador para entrar al sistema.</div>
+  </div>
+  <Switch 
+    checked={formData.requiresClockIn} 
+    onCheckedChange={(v) => setFormData({ ...formData, requiresClockIn: v })} 
+  />
+</div>
 
               <div className="flex items-center justify-between border-b pb-4">
                 <div className="space-y-0.5">
