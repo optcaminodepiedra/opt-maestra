@@ -28,7 +28,7 @@ type Boot = {
     email: string | null;
     role: string;
     isActive: boolean;
-    requiresClockIn: boolean; // <--- ASEGÚRATE QUE ESTÉ ESTA LÍNEA
+    requiresClockIn: boolean; 
     primaryBusinessId: string | null;
     businessId: string | null;
     createdAt: string;
@@ -74,9 +74,6 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
     });
   }, [users, q]);
 
-  // ==============================
-  // FUNCIONES DE EDICIÓN
-  // ==============================
   function openEditModal(user: any) {
     setEditingUser(user);
     setFormData({
@@ -86,7 +83,6 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
       role: user.role,
       primaryBusinessId: user.primaryBusinessId || "__NONE__",
       isActive: user.isActive,
-      // Usamos doble negación para forzar a que sea un Booleano (true/false)
       requiresClockIn: !!user.requiresClockIn, 
     });
   }
@@ -103,7 +99,7 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
         role: formData.role,
         primaryBusinessId: formData.primaryBusinessId === "__NONE__" ? null : formData.primaryBusinessId,
         isActive: formData.isActive,
-        requiresClockIn: formData.requiresClockIn, // <-- Enviar valor
+        requiresClockIn: formData.requiresClockIn,
       });
       setEditingUser(null);
     } catch (e: any) {
@@ -115,7 +111,7 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
 
   async function deleteUser(userId: string) {
     if (!canDelete) return alert("No tienes permiso para eliminar.");
-    if (!confirm("¿Eliminar usuario DEFINITIVAMENTE? Esta acción no se puede deshacer.")) return;
+    if (!confirm("¿Eliminar usuario DEFINITIVAMENTE?")) return;
 
     try {
       await adminDeleteUser(userId);
@@ -125,9 +121,6 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
     }
   }
 
-  // ==============================
-  // FUNCIONES DE CREACIÓN
-  // ==============================
   async function handleCreate() {
     if (!canEdit) return alert("No tienes permiso para crear usuarios.");
     if (!newData.fullName || !newData.username) {
@@ -163,7 +156,6 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
               <CardTitle className="text-base">Directorio de Usuarios</CardTitle>
               <Badge variant="secondary">{filtered.length} usuarios</Badge>
             </div>
-            
             <Button size="sm" onClick={() => setIsCreating(true)} disabled={!canEdit} className="bg-primary hover:bg-primary/90">
               <PlusCircle className="w-4 h-4 mr-2" />
               Nuevo Usuario
@@ -172,113 +164,76 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
         </CardHeader>
 
         <CardContent className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-[1fr_auto] items-end">
-            <div className="space-y-2">
-              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por nombre, correo, username o rol..." className="max-w-sm" />
-            </div>
-          </div>
-
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar usuario..." className="max-w-sm" />
           <Separator />
-
           <div className="rounded-lg border overflow-auto">
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50">
                   <TableHead>Usuario</TableHead>
                   <TableHead>Contacto</TableHead>
-                  <TableHead>Rol Asignado</TableHead>
+                  <TableHead>Rol</TableHead>
                   <TableHead>Unidad Principal</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((u) => {
-                  const businessName = businesses.find(b => b.id === u.primaryBusinessId)?.name || "—";
-                  
-                  return (
-                    <TableRow key={u.id} className="hover:bg-muted/30">
-                      <TableCell>
-                        <div className="font-semibold">{u.fullName}</div>
-                        <div className="text-xs text-muted-foreground">@{u.username}</div>
-                      </TableCell>
-                      
-                      <TableCell>
-                        <div className="text-sm">{u.email || "Sin correo"}</div>
-                      </TableCell>
-
-                      <TableCell>
-                        <Badge variant="outline" className="font-normal bg-blue-50 text-blue-700 border-blue-200">
-                          {u.role}
-                        </Badge>
-                      </TableCell>
-
-                      <TableCell className="text-sm text-muted-foreground font-medium">
-                        {businessName}
-                      </TableCell>
-
-                      <TableCell>
-                        <div className="flex flex-col gap-1">
-                          <Badge variant={u.isActive ? "secondary" : "destructive"} className="font-normal w-fit">
-                            {u.isActive ? "Activo" : "Inactivo"}
-                          </Badge>
-                          {/* INDICADOR VISUAL DE RELOJ OBLIGATORIO EN TABLA */}
-                          {u.requiresClockIn && (
-                            <Badge className="bg-orange-100 text-orange-700 border-orange-200 font-normal w-fit">
-                              <Clock className="w-3 h-3 mr-1" /> Reloj
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-
-                      <TableCell className="text-right">
-                        <Button variant="outline" size="sm" onClick={() => openEditModal(u)} disabled={!canEdit}>
-                          <Edit className="w-4 h-4 mr-2" />
-                          Editar
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                {filtered.map((u) => (
+                  <TableRow key={u.id} className="hover:bg-muted/30">
+                    <TableCell>
+                      <div className="font-semibold">{u.fullName}</div>
+                      <div className="text-xs text-muted-foreground">@{u.username}</div>
+                    </TableCell>
+                    <TableCell>{u.email || "—"}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="bg-blue-50 text-blue-700">{u.role}</Badge>
+                    </TableCell>
+                    <TableCell>{businesses.find(b => b.id === u.primaryBusinessId)?.name || "—"}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-col gap-1">
+                        <Badge variant={u.isActive ? "secondary" : "destructive"}>{u.isActive ? "Activo" : "Inactivo"}</Badge>
+                        {u.requiresClockIn && (
+                          <Badge className="bg-orange-100 text-orange-700 border-orange-200"><Clock className="w-3 h-3 mr-1" /> Reloj</Badge>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button variant="outline" size="sm" onClick={() => openEditModal(u)} disabled={!canEdit}>
+                        <Edit className="w-4 h-4 mr-2" /> Editar
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
           </div>
         </CardContent>
       </Card>
 
-      {/* MODAL DE EDICIÓN */}
       <Dialog open={!!editingUser} onOpenChange={(open) => !open && setEditingUser(null)}>
         <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle>Editar Perfil de Usuario</DialogTitle>
-          </DialogHeader>
-
+          <DialogHeader><DialogTitle>Editar Perfil de Usuario</DialogTitle></DialogHeader>
           {editingUser && (
             <div className="grid gap-4 py-4">
-              
-             {/* --- NUEVO BLOQUE: RELOJ OBLIGATORIO --- */}
-{/* Búscalo justo arriba de "Acceso al Sistema" */}
-<div className="bg-red-500 text-white p-2 text-center font-bold">
-  ESTOY EDITANDO EL ARCHIVO CORRECTO
-</div>
-<div className="flex items-center justify-between p-3 border rounded-lg bg-orange-50/50 border-orange-100 mb-4">
-  <div className="space-y-0.5">
-    <div className="text-sm font-bold flex items-center gap-2 text-orange-800">
-      <Clock className="w-4 h-4 text-orange-600" />
-      Asistencia Obligatoria
-    </div>
-    <div className="text-[10px] text-muted-foreground uppercase">Exigir reloj checador para entrar</div>
-  </div>
-  <Switch 
-    checked={!!formData.requiresClockIn} 
-    onCheckedChange={(v) => setFormData({ ...formData, requiresClockIn: v })} 
-  />
-</div>
+              {/* SWITCH ASISTENCIA OBLIGATORIA */}
+              <div className="flex items-center justify-between p-3 border rounded-lg bg-orange-50/50 border-orange-100">
+                <div className="space-y-0.5">
+                  <div className="text-sm font-bold flex items-center gap-2 text-orange-800">
+                    <Clock className="w-4 h-4 text-orange-600" /> Reloj Obligatorio
+                  </div>
+                  <div className="text-[10px] text-muted-foreground uppercase">Exigir asistencia para entrar</div>
+                </div>
+                <Switch 
+                  checked={!!formData.requiresClockIn} 
+                  onCheckedChange={(v) => setFormData({ ...formData, requiresClockIn: v })} 
+                />
+              </div>
 
               <div className="flex items-center justify-between border-b pb-4">
                 <div className="space-y-0.5">
                   <Label>Acceso al Sistema</Label>
-                  <div className="text-xs text-muted-foreground">Permite o bloquea el inicio de sesión.</div>
+                  <div className="text-xs text-muted-foreground">Habilitar/Bloquear login.</div>
                 </div>
                 <Switch 
                   checked={formData.isActive} 
@@ -288,7 +243,7 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Nombre Completo</Label>
+                  <Label>Nombre</Label>
                   <Input value={formData.fullName} onChange={(e) => setFormData({ ...formData, fullName: e.target.value })} />
                 </div>
                 <div className="space-y-2">
@@ -298,8 +253,8 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
               </div>
 
               <div className="space-y-2">
-                <Label>Correo Electrónico (Login)</Label>
-                <Input type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} placeholder="usuario@correo.com" />
+                <Label>Email</Label>
+                <Input type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -307,101 +262,64 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
                   <Label>Rol</Label>
                   <Select value={formData.role} onValueChange={(v) => setFormData({ ...formData, role: v })}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-                    </SelectContent>
+                    <SelectContent>{ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                
                 <div className="space-y-2">
-                  <Label>Unidad Principal</Label>
+                  <Label>Unidad</Label>
                   <Select value={formData.primaryBusinessId} onValueChange={(v) => setFormData({ ...formData, primaryBusinessId: v })}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__NONE__">(Sin unidad fija)</SelectItem>
-                      {businesses.map((b) => (
-                        <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-                      ))}
+                      <SelectItem value="__NONE__">(Sin unidad)</SelectItem>
+                      {businesses.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
             </div>
           )}
-
-          <DialogFooter className="flex items-center justify-between sm:justify-between w-full">
-            <Button variant="ghost" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={() => deleteUser(editingUser.id)}>
-              <Trash2 className="w-4 h-4 mr-2" /> Eliminar Cuenta
-            </Button>
-            
+          <DialogFooter className="flex items-center justify-between w-full">
+            <Button variant="ghost" className="text-red-600" onClick={() => deleteUser(editingUser.id)}><Trash2 className="w-4 h-4 mr-2" /> Eliminar</Button>
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => setEditingUser(null)}>Cancelar</Button>
-              <Button onClick={handleSaveEdit} disabled={isSaving}>
-                {isSaving ? "Guardando..." : "Guardar Cambios"}
-              </Button>
+              <Button onClick={handleSaveEdit} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar Cambios"}</Button>
             </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* MODAL DE CREACIÓN */}
       <Dialog open={isCreating} onOpenChange={setIsCreating}>
         <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle>Registrar Nuevo Usuario</DialogTitle>
-            <DialogDescription>
-              La contraseña por defecto será <strong>123456</strong>. El usuario podrá cambiarla después.
-            </DialogDescription>
-          </DialogHeader>
-
+          <DialogHeader><DialogTitle>Nuevo Usuario</DialogTitle></DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Nombre Completo</Label>
-                <Input value={newData.fullName} onChange={(e) => setNewData({ ...newData, fullName: e.target.value })} placeholder="Ej. Fulano Perez" />
-              </div>
-              <div className="space-y-2">
-                <Label>Username</Label>
-                <Input value={newData.username} onChange={(e) => setNewData({ ...newData, username: e.target.value })} placeholder="Fulanito" />
-              </div>
+              <div className="space-y-2"><Label>Nombre</Label><Input value={newData.fullName} onChange={(e) => setNewData({ ...newData, fullName: e.target.value })} /></div>
+              <div className="space-y-2"><Label>Username</Label><Input value={newData.username} onChange={(e) => setNewData({ ...newData, username: e.target.value })} /></div>
             </div>
-
-            <div className="space-y-2">
-              <Label>Correo Electrónico</Label>
-              <Input type="email" value={newData.email} onChange={(e) => setNewData({ ...newData, email: e.target.value })} placeholder="fulano@ejemplo.com" />
-            </div>
-
+            <div className="space-y-2"><Label>Email</Label><Input type="email" value={newData.email} onChange={(e) => setNewData({ ...newData, email: e.target.value })} /></div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Rol</Label>
                 <Select value={newData.role} onValueChange={(v) => setNewData({ ...newData, role: v })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-                  </SelectContent>
+                  <SelectContent>{ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
-              
               <div className="space-y-2">
-                <Label>Unidad Principal</Label>
+                <Label>Unidad</Label>
                 <Select value={newData.primaryBusinessId} onValueChange={(v) => setNewData({ ...newData, primaryBusinessId: v })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__NONE__">(Sin unidad fija)</SelectItem>
-                    {businesses.map((b) => (
-                      <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-                    ))}
+                    <SelectItem value="__NONE__">(Sin unidad)</SelectItem>
+                    {businesses.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
             </div>
           </div>
-
-          <DialogFooter className="flex justify-end gap-2">
+          <DialogFooter>
             <Button variant="outline" onClick={() => setIsCreating(false)}>Cancelar</Button>
-            <Button onClick={handleCreate} disabled={isSaving}>
-              {isSaving ? "Creando..." : "Crear Usuario"
-            </Button>
+            <Button onClick={handleCreate} disabled={isSaving}>{isSaving ? "Creando..." : "Crear"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
