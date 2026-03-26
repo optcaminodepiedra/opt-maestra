@@ -6,11 +6,13 @@ import { hasPermission } from "@/lib/rbac";
 import { getMe } from "@/lib/session";
 import bcrypt from "bcryptjs";
 
+// Función auxiliar para refrescar las rutas después de un cambio
 function rv() {
   revalidatePath("/app/owner/users");
   revalidatePath("/app/owner/settings");
 }
 
+// Validación de permisos
 async function requirePerm(perm: Parameters<typeof hasPermission>[1]) {
   const me = await getMe();
   if (!hasPermission(me.role, perm)) throw new Error("Sin permiso");
@@ -21,10 +23,14 @@ function roleIsHigh(r?: string) {
   return r === "OWNER" || r === "MASTER_ADMIN";
 }
 
+// ==========================================
+// ✅ ESTA ES LA FUNCIÓN QUE TE FALTABA
+// ==========================================
 export async function getAdminBoot() {
   await requirePerm("ADMIN_USERS_VIEW");
 
   const businesses = await prisma.business.findMany({ orderBy: { name: "asc" } });
+  
   const cashpoints = await prisma.cashpoint.findMany({
     orderBy: [{ businessId: "asc" }, { name: "asc" }],
   });
@@ -41,13 +47,16 @@ export async function getAdminBoot() {
       createdAt: true,
       primaryBusinessId: true,
       businessId: true,
-      requiresClockIn: true, // <-- LEER VALOR
+      requiresClockIn: true, // 🚨 IMPORTANTE: Esto habilita el switch en la UI
     },
   });
 
   return { businesses, cashpoints, users };
 }
 
+// ==========================================
+// CREAR USUARIO
+// ==========================================
 export async function adminCreateUser(input: {
   fullName: string;
   username: string;
@@ -56,12 +65,16 @@ export async function adminCreateUser(input: {
   primaryBusinessId?: string | null;
 }) {
   const me = await requirePerm("ADMIN_USERS_EDIT");
-  if (!input.fullName || !input.username || !input.role) throw new Error("Faltan datos.");
-  
+
+  if (!input.fullName || !input.username || !input.role) {
+    throw new Error("Faltan datos obligatorios (Nombre, Username, Rol).");
+  }
+
   const existingUser = await prisma.user.findUnique({ 
     where: { username: input.username.trim().toLowerCase() } 
   });
-  if (existingUser) throw new Error("Username en uso.");
+  
+  if (existingUser) throw new Error("El username ya está en uso.");
 
   const hashedPassword = await bcrypt.hash("123456", 10);
 
@@ -74,6 +87,7 @@ export async function adminCreateUser(input: {
       primaryBusinessId: input.primaryBusinessId,
       passwordHash: hashedPassword,
       isActive: true,
+      requiresClockIn: false, // Por defecto no es obligatorio
     },
   });
 
@@ -81,6 +95,9 @@ export async function adminCreateUser(input: {
   return true;
 }
 
+// ==========================================
+// ACTUALIZAR USUARIO (INCLUYE EL SWITCH)
+// ==========================================
 export async function adminUpdateUser(input: {
   userId: string;
   role?: string;
@@ -89,19 +106,21 @@ export async function adminUpdateUser(input: {
   username?: string;
   email?: string;
   isActive?: boolean;
-  requiresClockIn?: boolean; // <-- NUEVO
+  requiresClockIn?: boolean; // 🚨 NUEVO CAMPO
 }) {
   const me = await requirePerm("ADMIN_USERS_EDIT");
+
   if (!input.userId) throw new Error("Falta userId");
 
   const data: any = {};
+
   if (typeof input.role === "string") data.role = input.role;
   if (input.primaryBusinessId !== undefined) data.primaryBusinessId = input.primaryBusinessId;
   if (typeof input.fullName === "string") data.fullName = input.fullName.trim();
   if (typeof input.username === "string") data.username = input.username.trim().toLowerCase();
   if (typeof input.email === "string") data.email = input.email.trim().toLowerCase();
   if (typeof input.isActive === "boolean") data.isActive = input.isActive;
-  if (typeof input.requiresClockIn === "boolean") data.requiresClockIn = input.requiresClockIn; // <-- GUARDAR
+  if (typeof input.requiresClockIn === "boolean") data.requiresClockIn = input.requiresClockIn; // 🚨 GUARDADO
 
   await prisma.user.update({
     where: { id: input.userId },
@@ -112,6 +131,9 @@ export async function adminUpdateUser(input: {
   return true;
 }
 
+// ==========================================
+// DESACTIVAR Y ELIMINAR
+// ==========================================
 export async function adminDeactivateUser(userId: string) {
   const me = await requirePerm("ADMIN_USERS_EDIT");
   await prisma.user.update({ where: { id: userId }, data: { isActive: false } });
