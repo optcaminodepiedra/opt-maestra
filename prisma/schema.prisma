@@ -482,6 +482,9 @@ model InventoryItem {
 
   minQty    Int @default(0)
   onHandQty Int @default(0)
+  
+  lastPriceCents Int     @default(0) 
+  supplierName   String? 
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -544,6 +547,8 @@ model RequisitionItem {
   qtyRequested Int
   qtyApproved  Int?
   qtyReceived  Int?
+  
+  estimatedPriceCents Int @default(0)
 
   note      String?
   createdAt DateTime @default(now())
