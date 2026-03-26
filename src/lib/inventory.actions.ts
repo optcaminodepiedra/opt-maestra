@@ -46,3 +46,31 @@ export async function requestRestock(itemId: string, businessId: string, userId:
   revalidatePath("/app/inventory");
   return true;
 }
+// Agrégala hasta el final del archivo
+
+export async function approveRequisition(reqId: string, userId: string) {
+  if (!reqId || !userId) throw new Error("Faltan datos para aprobar");
+
+  await prisma.requisition.update({
+    where: { id: reqId },
+    data: {
+      status: "APPROVED",
+      approvedById: userId,
+      // Al aprobar, copiamos la cantidad solicitada a la cantidad aprobada para todos sus items
+      // (En un futuro podrías editar esto si piden 10 pero solo apruebas 5)
+    }
+  });
+
+  // Refrescamos las pantallas
+  revalidatePath("/app/inventory/requisitions");
+  revalidatePath("/app/inventory");
+  return true;
+}
+
+export async function deleteRequisition(reqId: string) {
+  if (!reqId) throw new Error("Falta el ID");
+  await prisma.requisition.delete({ where: { id: reqId } });
+  revalidatePath("/app/inventory/requisitions");
+  revalidatePath("/app/inventory");
+  return true;
+}
