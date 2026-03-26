@@ -400,7 +400,7 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
           <DialogFooter className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setIsCreating(false)}>Cancelar</Button>
             <Button onClick={handleCreate} disabled={isSaving}>
-              {isSaving ? "Creando..." : "Crear Usuario"}
+              {isSaving ? "Creando..." : "Crear Usuario"
             </Button>
           </DialogFooter>
         </DialogContent>
