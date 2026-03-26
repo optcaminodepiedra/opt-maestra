@@ -74,3 +74,28 @@ export async function deleteRequisition(reqId: string) {
   revalidatePath("/app/inventory");
   return true;
 }
+
+// Agrégalo al final del archivo
+export async function createInventoryItem(data: {
+  businessId: string;
+  name: string;
+  sku?: string;
+  category?: string;
+  unit: "PIECE" | "KG" | "LT" | "BOX" | "PACK";
+  minQty: number;
+  lastPriceCents: number;
+  supplierName?: string;
+}) {
+  if (!data.name || !data.businessId) throw new Error("Faltan datos obligatorios");
+
+  const newItem = await prisma.inventoryItem.create({
+    data: {
+      ...data,
+      onHandQty: 0, // Inicia en 0. Para sumarle piezas, usaremos la pantalla de Movimientos después
+      isActive: true,
+    }
+  });
+
+  revalidatePath("/app/inventory");
+  return newItem.id;
+}
