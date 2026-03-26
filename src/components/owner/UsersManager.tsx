@@ -28,7 +28,7 @@ type Boot = {
     email: string | null;
     role: string;
     isActive: boolean;
-    requiresClockIn: boolean; // <-- Nuevo campo en el type
+    requiresClockIn: boolean; // <--- ASEGÚRATE QUE ESTÉ ESTA LÍNEA
     primaryBusinessId: string | null;
     businessId: string | null;
     createdAt: string;
@@ -86,7 +86,8 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
       role: user.role,
       primaryBusinessId: user.primaryBusinessId || "__NONE__",
       isActive: user.isActive,
-      requiresClockIn: user.requiresClockIn || false, // <-- Cargar valor
+      // Usamos doble negación para forzar a que sea un Booleano (true/false)
+      requiresClockIn: !!user.requiresClockIn, 
     });
   }
 
@@ -256,16 +257,17 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
             <div className="grid gap-4 py-4">
               
              {/* --- NUEVO BLOQUE: RELOJ OBLIGATORIO --- */}
-<div className="flex items-center justify-between p-3 border rounded-lg bg-orange-50/50 border-orange-100">
+{/* Búscalo justo arriba de "Acceso al Sistema" */}
+<div className="flex items-center justify-between p-3 border rounded-lg bg-orange-50/50 border-orange-100 mb-4">
   <div className="space-y-0.5">
-    <div className="text-sm font-bold flex items-center gap-2">
+    <div className="text-sm font-bold flex items-center gap-2 text-orange-800">
       <Clock className="w-4 h-4 text-orange-600" />
       Asistencia Obligatoria
     </div>
-    <div className="text-xs text-muted-foreground">Exigir reloj checador para entrar al sistema.</div>
+    <div className="text-[10px] text-muted-foreground uppercase">Exigir reloj checador para entrar</div>
   </div>
   <Switch 
-    checked={formData.requiresClockIn} 
+    checked={!!formData.requiresClockIn} 
     onCheckedChange={(v) => setFormData({ ...formData, requiresClockIn: v })} 
   />
 </div>
