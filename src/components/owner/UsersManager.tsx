@@ -213,7 +213,7 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
 
       <Dialog open={!!editingUser} onOpenChange={(open) => !open && setEditingUser(null)}>
         <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader><DialogTitle>Editar Perfil de Usuario v2</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Editar Perfil de Usuario v2.</DialogTitle></DialogHeader>
           {editingUser && (
             <div className="grid gap-4 py-4">
               {/* SWITCH ASISTENCIA OBLIGATORIA */}
