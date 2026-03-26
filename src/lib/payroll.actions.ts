@@ -2,7 +2,6 @@
 
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
-
 // ==============================
 // ✅ LECTURA DE NÓMINA
 // ==============================
@@ -42,24 +41,7 @@ export async function approveWorkDay(id: string) {
 export async function deleteWorkDay(id: string) {
   if (!id) throw new Error("Falta el ID del registro");
 
-  // 1. Borramos las checadas usando el nombre real: timePunch
-  await prisma.timePunch.deleteMany({
-    where: { workDayId: id }
-  });
-
-  // 2. Ahora sí, borramos el día de trabajo vacío
-  await prisma.workDay.delete({
-    where: { id }
-  });
-
-  // 3. Refrescamos las pantallas
-  revalidatePath("/app/payroll");
-  revalidatePath("/app/owner");
-  return true;
-}
-
-// Agrégalo al final del archivo
-export async function forceClockIn(userId: string, gpsLat?: number, gpsLng?: number) {
+  export async function forceClockIn(userId: string, gpsLat?: number, gpsLng?: number, photoUrl?: string) {
   if (!userId) throw new Error("Usuario no válido");
 
   const today = new Date();
@@ -74,18 +56,18 @@ export async function forceClockIn(userId: string, gpsLat?: number, gpsLng?: num
     }
   });
 
-  // 2. Le registramos su primera checada (ENTRADA)
+  // 2. Registramos la entrada con la FOTO y el GPS
   await prisma.timePunch.create({
     data: {
       workDayId: workDay.id,
       type: "ENTRADA",
-      deviceType: "MOBILE", // Asumimos que es desde su dispositivo personal
+      deviceType: "MOBILE",
       gpsLat,
-      gpsLng
+      gpsLng,
+      photoUrl, // <--- Guardamos el Base64 de la cámara
     }
   });
 
-  // Refrescamos todo el layout para que el sistema ya le de acceso
   revalidatePath("/", "layout");
   return true;
 }

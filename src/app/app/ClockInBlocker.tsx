@@ -1,192 +1,130 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
-import Webcam from "react-webcam"; // Si no tienes instalada esta librería, corre: npm install react-webcam
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
+import Webcam from "react-webcam";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Camera, MapPin, CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
-import { forceClockInWithPhoto } from "@/lib/payroll.actions";
+import { Clock, MapPin, Camera, RefreshCw, CheckCircle2, Loader2 } from "lucide-react";
+import { forceClockIn } from "@/lib/payroll.actions";
 
 export default function ClockInBlocker({ userName, userId }: { userName: string, userId: string }) {
+  const [loading, setLoading] = useState(false);
+  const [imgSrc, setImgSrc] = useState<string | null>(null);
   const webcamRef = useRef<Webcam>(null);
-  const [photoBase64, setPhotoBase64] = useState<string | null>(null);
-  const [location, setLocation] = useState<{ lat: number, lng: number } | null>(null);
-  const [status, setStatus] = useState<"idle" | "ready" | "saving" | "success" | "error">("idle");
-  const [errorMsg, setErrorMsg] = useState("");
 
-  // Configuración de la cámara
-  const videoConstraints = {
-    width: 640,
-    height: 480,
-    facingMode: "user" // Usa la cámara frontal (ideal para selfies de checado)
-  };
-
-  // 1. CAPTURAR FOTO Y UBICACIÓN
-  const handleCapture = useCallback(() => {
-    setStatus("idle");
-    setErrorMsg("");
-    
-    // Capturamos la foto desde la webcam
+  // Capturar foto de la webcam
+  const capture = useCallback(() => {
     const imageSrc = webcamRef.current?.getScreenshot();
-    if (imageSrc) {
-      setPhotoBase64(imageSrc);
-    } else {
-      setStatus("error");
-      setErrorMsg("No se pudo activar la cámara o tomar la foto.");
-      return;
-    }
+    if (imageSrc) setImgSrc(imageSrc);
+  }, [webcamRef]);
 
-    // Pedimos la ubicación GPS
-    if (navigator.geolocation) {
+  const handleClockIn = () => {
+    if (!imgSrc) return alert("Por favor, tómate una foto primero.");
+    setLoading(true);
+    
+    if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setLocation({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          });
-          setStatus("ready"); // Foto y GPS listos
+        async (position) => {
+          try {
+            await forceClockIn(userId, position.coords.latitude, position.coords.longitude, imgSrc);
+            // El revalidatePath hará el resto
+          } catch (error) {
+            alert("Error al registrar entrada.");
+            setLoading(false);
+          }
         },
-        (error) => {
-          // Si el GPS falla, dejamos que chequen pero avisamos
-          console.error("Error GPS:", error);
-          setStatus("ready"); // Procedemos sin GPS si es necesario
+        async () => {
+          alert("No pudimos obtener ubicación, pero registraremos tu entrada con la foto.");
+          await forceClockIn(userId, undefined, undefined, imgSrc);
         }
       );
     } else {
-      setStatus("ready"); // Procedemos sin GPS
-    }
-  }, [webcamRef]);
-
-  // 2. CONFIRMAR Y SUBIR EL CHECK
-  const handleConfirmClockIn = async () => {
-    if (!photoBase64) return;
-    setStatus("saving");
-
-    try {
-      await forceClockInWithPhoto(
-        userId, 
-        photoBase64, 
-        location?.lat, 
-        location?.lng
-      );
-      setStatus("success");
-      
-      // Pequeño delay para que vean el check verde antes de que cargue el sistema
-      setTimeout(() => {
-        window.location.reload(); // Recargamos para que el layout los deje pasar
-      }, 1500);
-
-    } catch (error: any) {
-      console.error(error);
-      setStatus("error");
-      setErrorMsg(error.message || "Hubo un error al guardar tu asistencia.");
+      forceClockIn(userId, undefined, undefined, imgSrc);
     }
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-slate-50 p-4">
-      <Card className="w-full max-w-lg shadow-xl border-t-4 border-t-primary">
-        <CardHeader className="text-center pb-3">
-          <CardTitle className="text-3xl font-bold tracking-tight text-primary">
-            ¡Hola, {userName}!
-          </CardTitle>
-          <CardDescription className="text-base text-slate-700 font-semibold mt-2">
-            Necesitamos registrar tu entrada para darte acceso al sistema.
-          </CardDescription>
-        </CardHeader>
+    <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
+      <Card className="max-w-md w-full shadow-lg border-t-4 border-t-primary overflow-hidden">
+        <CardContent className="pt-8 pb-8 text-center space-y-6">
+          <div className="mx-auto w-12 h-12 bg-primary/10 flex items-center justify-center rounded-full text-primary">
+            <Clock className="w-6 h-6" />
+          </div>
+          
+          <div>
+            <h1 className="text-xl font-bold">¡Hola, {userName}!</h1>
+            <p className="text-muted-foreground mt-1 text-xs">
+              Es necesario registrar tu foto y ubicación para entrar.
+            </p>
+          </div>
 
-        <CardContent className="space-y-4">
-          <div className="border-2 border-dashed border-slate-300 rounded-lg p-3 bg-white">
-            <h4 className="text-sm font-bold flex items-center gap-2 mb-3 text-slate-800">
-              <Camera className="w-5 h-5 text-slate-500" />
-              Tómate una foto para el registro (Selfie)
-            </h4>
-
-            {status === "idle" || status === "error" || !photoBase64 ? (
-              // VISTA DE LA CÁMARA EN VIVO
-              <div className="relative rounded-md overflow-hidden aspect-video bg-black">
+          {/* ÁREA DE CÁMARA / PREVIEW */}
+          <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden shadow-inner border-2 border-muted">
+            {!imgSrc ? (
+              <>
                 <Webcam
                   audio={false}
                   ref={webcamRef}
                   screenshotFormat="image/jpeg"
-                  videoConstraints={videoConstraints}
+                  videoConstraints={{ facingMode: "user" }}
                   className="w-full h-full object-cover"
                 />
-              </div>
+                <Button 
+                  onClick={capture}
+                  variant="secondary"
+                  size="icon"
+                  className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full h-12 w-12 shadow-lg border-2 border-white"
+                >
+                  <Camera className="w-6 h-6" />
+                </Button>
+              </>
             ) : (
-              // PREVIEW DE LA FOTO CAPTURADA
-              <div className="relative rounded-md overflow-hidden aspect-video border-2 border-green-500 bg-black">
-                <img src={photoBase64} alt="Preview" className="w-full h-full object-cover" />
-                <div className="absolute top-2 right-2 bg-green-600 text-white rounded-full p-1 shadow">
-                    <CheckCircle2 className="w-6 h-6" />
+              <div className="relative w-full h-full">
+                <img src={imgSrc} alt="Preview" className="w-full h-full object-cover" />
+                <div className="absolute inset-0 bg-green-500/20 flex items-center justify-center">
+                  <CheckCircle2 className="text-white w-12 h-12 drop-shadow-md" />
                 </div>
+                <Button 
+                  onClick={() => setImgSrc(null)}
+                  variant="destructive"
+                  size="sm"
+                  className="absolute top-2 right-2 rounded-full h-8 w-8 p-0"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </Button>
               </div>
             )}
           </div>
 
-          {/* INDICADOR DE GPS */}
-          <div className="flex items-center gap-3 bg-muted/50 p-3 rounded-lg border">
-            <MapPin className={`w-6 h-6 ${location ? 'text-green-600' : 'text-slate-400'}`} />
-            <div className="flex-1">
-              <div className="text-sm font-bold text-slate-800">Validación Geográfica (GPS)</div>
-              <div className="text-xs text-muted-foreground">
-                {location 
-                  ? `Ubicación capturada: [${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}]` 
-                  : 'Obteniendo ubicación...'
-                }
-              </div>
-            </div>
-            {!location && <Loader2 className="w-4 h-4 animate-spin text-slate-400" />}
+          <div className="bg-blue-50 p-2 rounded-lg flex items-center justify-center gap-2 text-blue-700 text-[10px] font-medium uppercase tracking-wider">
+            <MapPin className="w-3 h-3" />
+            Ubicación GPS Requerida
           </div>
 
-          {/* MENSAJES DE ERROR O ÉXITO */}
-          {status === "error" && (
-            <div className="bg-red-50 border border-red-200 text-red-800 p-3 rounded-lg text-sm flex items-center gap-2 font-medium">
-              <AlertTriangle className="w-5 h-5" />
-              {errorMsg}
-            </div>
-          )}
-          {status === "success" && (
-            <div className="bg-green-50 border border-green-200 text-green-800 p-3 rounded-lg text-sm flex items-center gap-2 font-medium">
-              <CheckCircle2 className="w-5 h-5" />
-              ¡Asistencia registrada con éxito! Cargando el sistema...
-            </div>
-          )}
+          <div className="space-y-3">
+            {!imgSrc ? (
+              <p className="text-sm font-medium text-orange-600 animate-pulse">
+                Pulsa el botón de la cámara para tomarte la foto
+              </p>
+            ) : (
+              <Button 
+                size="lg" 
+                className="w-full text-lg h-14 bg-green-600 hover:bg-green-700 shadow-md" 
+                onClick={handleClockIn}
+                disabled={loading}
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                    Subiendo Check...
+                  </>
+                ) : (
+                  "Confirmar y Enviar Check"
+                )}
+              </Button>
+            )}
+          </div>
         </CardContent>
-
-        <CardFooter className="flex flex-col gap-3 border-t pt-4">
-          {/* BOTÓN 1: TOMAR O REPETIR FOTO */}
-          <Button 
-            variant={photoBase64 ? "outline" : "default"} 
-            className="w-full h-12 text-base font-semibold"
-            onClick={handleCapture}
-            disabled={status === "saving" || status === "success"}
-          >
-            <Camera className="w-5 h-5 mr-2" />
-            {photoBase64 ? "Repetir Foto" : "Tómame la Foto Ahora"}
-          </Button>
-
-          {/* BOTÓN 2: CONFIRMAR CHECADO */}
-          {photoBase64 && (
-            <Button 
-              className="w-full h-12 text-base font-semibold bg-green-600 hover:bg-green-700"
-              onClick={handleConfirmClockIn}
-              disabled={status === "saving" || status === "success"}
-            >
-              {status === "saving" ? (
-                <>
-                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                  Subiendo...
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="w-5 h-5 mr-2" />
-                  CONFIRMAR Y SUBIR MI CHECK
-                </>
-              )}
-            </Button>
-          )}
-        </CardFooter>
       </Card>
     </div>
   );
