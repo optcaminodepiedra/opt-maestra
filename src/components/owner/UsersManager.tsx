@@ -258,6 +258,9 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
               
              {/* --- NUEVO BLOQUE: RELOJ OBLIGATORIO --- */}
 {/* Búscalo justo arriba de "Acceso al Sistema" */}
+<div className="bg-red-500 text-white p-2 text-center font-bold">
+  ESTOY EDITANDO EL ARCHIVO CORRECTO
+</div>
 <div className="flex items-center justify-between p-3 border rounded-lg bg-orange-50/50 border-orange-100 mb-4">
   <div className="space-y-0.5">
     <div className="text-sm font-bold flex items-center gap-2 text-orange-800">
