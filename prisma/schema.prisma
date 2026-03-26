@@ -111,6 +111,7 @@ model User {
   email        String?  @unique // ✅ CAMPO AÑADIDO PARA LOGIN CON GOOGLE
   passwordHash String
   role         Role
+  requiresClockIn Boolean @default(false)
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
 

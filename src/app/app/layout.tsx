@@ -1,37 +1,53 @@
 import { getServerSession } from "next-auth";
-import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
-import { getNavByRole } from "@/lib/nav";
-import { Sidebar } from "@/components/app/Sidebar";
-import { TopBar } from "@/components/app/TopBar";
-import { MobileSidebar } from "@/components/app/MobileSidebar";
+import { redirect } from "next/navigation";
+import { prisma } from "@/lib/prisma";
+import ClockInBlocker from "./ClockInBlocker"; // Importamos nuestro guardia
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await getServerSession(authOptions);
-  if (!session) redirect("/login");
+  if (!session?.user) redirect("/login");
 
-  const role = (session as any).user.role as string;
-  const name = (session as any).user.name as string;
+  // 1. OBTENEMOS AL USUARIO DE LA BASE DE DATOS
+  const user = await prisma.user.findUnique({ where: { id: session.user.id } });
+  if (!user) redirect("/login");
 
-  const sections = getNavByRole(role);
+  let needsToClockIn = false;
 
-  return (
-    <div className="min-h-screen bg-muted/20">
-      <div className="flex min-h-screen">
-        {/* Desktop sidebar */}
-        <div className="hidden md:block">
-          <Sidebar sections={sections} />
-        </div>
+  // 2. LA NUEVA REGLA: Revisamos si este usuario en específico tiene prendido el switch
+  if (user.requiresClockIn) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-        {/* Main */}
-        <div className="flex-1 min-w-0">
-          <TopBar
-            name={name}
-            leftSlot={<MobileSidebar sections={sections} />}
-          />
-          <main className="p-6">{children}</main>
-        </div>
+    const activeShift = await prisma.workDay.findFirst({
+      where: {
+        userId: user.id,
+        status: "OPEN",
+        date: { gte: today }
+      }
+    });
+
+    if (!activeShift) {
+      needsToClockIn = true; // No tiene turno abierto = ¡Bloqueado!
+    }
+  }
+
+  // 3. SI NECESITA CHECAR, LE CARGAMOS SOLO LA PANTALLA DE BLOQUEO
+  if (needsToClockIn) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <ClockInBlocker userName={user.fullName || "Usuario"} userId={user.id} />
       </div>
+    );
+  }
+
+  // 4. SI YA CHECÓ (O SI TIENE EL SWITCH APAGADO), LE CARGAMOS EL SISTEMA NORMAL
+  return (
+    <div className="flex h-screen overflow-hidden bg-background">
+      {/* TU CÓDIGO ACTUAL DEL SIDEBAR Y NAVBAR DEBERÍA IR AQUÍ ADENTRO */}
+      <main className="flex-1 overflow-y-auto">
+        {children}
+      </main>
     </div>
   );
 }

@@ -57,3 +57,48 @@ export async function deleteWorkDay(id: string) {
   revalidatePath("/app/owner");
   return true;
 }
+
+// Agrégalo al final del archivo
+export async function forceClockIn(userId: string, gpsLat?: number, gpsLng?: number) {
+  if (!userId) throw new Error("Usuario no válido");
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // 1. Creamos el Día de Trabajo
+  const workDay = await prisma.workDay.create({
+    data: {
+      userId: userId,
+      date: today,
+      status: "OPEN",
+    }
+  });
+
+  // 2. Le registramos su primera checada (ENTRADA)
+  await prisma.timePunch.create({
+    data: {
+      workDayId: workDay.id,
+      type: "ENTRADA",
+      deviceType: "MOBILE", // Asumimos que es desde su dispositivo personal
+      gpsLat,
+      gpsLng
+    }
+  });
+
+  // Refrescamos todo el layout para que el sistema ya le de acceso
+  revalidatePath("/", "layout");
+  return true;
+}
+
+export async function toggleUserClockIn(userId: string, requiresClockIn: boolean) {
+  if (!userId) throw new Error("Falta el ID del usuario");
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { requiresClockIn }
+  });
+
+  // Refresca la vista donde tengas tu tabla de usuarios
+  revalidatePath("/app/settings/users"); 
+  return true;
+}
