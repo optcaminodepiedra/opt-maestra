@@ -4,9 +4,10 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button"; // <--- ESTA FALTABA
 import { Package, AlertTriangle, ClipboardCheck, ArrowRight, ShoppingCart, DollarSign, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
-import AlertButton from "./AlertButton"; // Lo crearemos en el paso 3
+import AlertButton from "./AlertButton";
 
 export default async function InventoryDashboardPage() {
   const session = await getServerSession(authOptions);
