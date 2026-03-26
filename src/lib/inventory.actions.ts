@@ -99,3 +99,55 @@ export async function createInventoryItem(data: {
   revalidatePath("/app/inventory");
   return newItem.id;
 }
+
+// Agrégalo al final del archivo
+export async function createInventoryMovement(data: {
+  businessId: string;
+  itemId: string;
+  userId: string;
+  type: "IN" | "OUT";
+  qty: number;
+  note?: string;
+}) {
+  if (!data.itemId || !data.qty || data.qty <= 0) {
+    throw new Error("Producto y cantidad mayor a 0 son requeridos");
+  }
+
+  // 1. Buscamos el producto actual para saber cuánto tiene
+  const item = await prisma.inventoryItem.findUnique({
+    where: { id: data.itemId }
+  });
+
+  if (!item) throw new Error("Producto no encontrado");
+
+  // 2. Calculamos la nueva existencia
+  let newQty = item.onHandQty;
+  if (data.type === "IN") {
+    newQty += data.qty; // Si entra, sumamos
+  } else if (data.type === "OUT") {
+    newQty -= data.qty; // Si sale, restamos
+    if (newQty < 0) newQty = 0; // Evitamos inventarios negativos por error de dedo
+  }
+
+  // 3. Guardamos el movimiento y actualizamos el producto AL MISMO TIEMPO (Transacción)
+  await prisma.$transaction([
+    prisma.inventoryMovement.create({
+      data: {
+        businessId: data.businessId,
+        itemId: data.itemId,
+        type: data.type,
+        qty: data.qty,
+        note: data.note,
+        createdById: data.userId
+      }
+    }),
+    prisma.inventoryItem.update({
+      where: { id: data.itemId },
+      data: { onHandQty: newQty }
+    })
+  ]);
+
+  // Refrescamos la Torre de Control
+  revalidatePath("/app/inventory");
+  return true;
+}
