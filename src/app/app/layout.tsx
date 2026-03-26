@@ -4,25 +4,24 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import ClockInBlocker from "./ClockInBlocker";
 
-// IMPORTA AQUÍ TUS COMPONENTES DE NAVBAR/SIDEBAR SI LOS TIENES APARTE
-// import { Sidebar } from "@/components/nav/Sidebar"; 
-// import { Navbar } from "@/components/nav/Navbar";
+// RUTAS CORREGIDAS SEGÚN TU IMAGEN
+import { Sidebar } from "@/components/app/Sidebar"; 
+import { TopBar } from "@/components/app/TopBar";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await getServerSession(authOptions);
   if (!session?.user) redirect("/login");
 
-  // 1. Obtenemos los datos del usuario logueado
+  // 1. Obtenemos al usuario y su configuración
   const user = await prisma.user.findUnique({ 
     where: { id: (session as any).user.id },
-    select: { id: true, fullName: true, requiresClockIn: true }
+    select: { id: true, fullName: true, requiresClockIn: true, role: true }
   });
 
   if (!user) redirect("/login");
 
-  let needsToClockIn = false;
-
   // 2. Lógica del Reloj Checador
+  let needsToClockIn = false;
   if (user.requiresClockIn) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -40,27 +39,24 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     }
   }
 
-  // 3. RENDERIZADO DEL SISTEMA
+  // 3. ESTRUCTURA VISUAL RECUPERADA
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      {/* AQUÍ DEBES PEGAR EL CÓDIGO DE TU SIDEBAR Y NAVBAR 
-          PARA QUE SIEMPRE SE VEAN 
-      */}
-      
-      {/* Ejemplo de estructura común: */}
-      {/* <Sidebar /> */}
-      
+      {/* Tu Sidebar real */}
+      <Sidebar />
+
       <div className="flex flex-col flex-1 overflow-hidden">
-        {/* <Navbar user={user} /> */}
-        
-        <main className="flex-1 overflow-y-auto p-4">
+        {/* Tu TopBar real (Navbar) */}
+        <TopBar />
+
+        <main className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-50/50">
           {needsToClockIn ? (
-            // Si falta checar, el contenido central se bloquea
-            <div className="flex items-center justify-center h-full">
+            /* BLOQUEO CENTRAL SI FALTA CHECK-IN */
+            <div className="flex items-center justify-center h-[80vh]">
               <ClockInBlocker userName={user.fullName || "Usuario"} userId={user.id} />
             </div>
           ) : (
-            // Si todo está ok, cargamos la página solicitada
+            /* CONTENIDO NORMAL */
             children
           )}
         </main>
