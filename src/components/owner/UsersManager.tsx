@@ -4,7 +4,7 @@ import * as React from "react";
 import {
   adminDeleteUser,
   adminUpdateUser,
-  adminCreateUser, // <--- Importamos la nueva función
+  adminCreateUser,
 } from "@/lib/admin.actions";
 import { hasPermission } from "@/lib/rbac";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,7 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { Edit, Trash2, PlusCircle } from "lucide-react";
+import { Edit, Trash2, PlusCircle, Clock } from "lucide-react";
 
 type Boot = {
   businesses: { id: string; name: string }[];
@@ -28,6 +28,7 @@ type Boot = {
     email: string | null;
     role: string;
     isActive: boolean;
+    requiresClockIn: boolean; // <-- Nuevo campo en el type
     primaryBusinessId: string | null;
     businessId: string | null;
     createdAt: string;
@@ -35,29 +36,10 @@ type Boot = {
 };
 
 const ROLES = [
-  "MASTER_ADMIN",
-  "OWNER",
-  "MANAGER_OPS",
-  "ACCOUNTING",
-  "SALES",
-  "RESERVATIONS",
-  "INVENTORY",
-  "STAFF_MAINTENANCE",
-  "MANAGER_RESTAURANT",
-  "STAFF_CASHIER",
-  "STAFF_WAITER",
-  "STAFF_BAR",
-  "STAFF_KITCHEN",
-  "MANAGER_HOTEL",
-  "STAFF_RECEPTION",
-  "STAFF_HOUSEKEEPING",
-  "MANAGER_RANCH",
-  "STAFF_EXPERIENCES",
-  "STAFF_FIELD",
-  "STAFF_STORE",
-  // Roles antiguos por compatibilidad:
-  "SUPERIOR",
-  "MANAGER"
+  "MASTER_ADMIN", "OWNER", "MANAGER_OPS", "ACCOUNTING", "SALES", "RESERVATIONS", "INVENTORY",
+  "STAFF_MAINTENANCE", "MANAGER_RESTAURANT", "STAFF_CASHIER", "STAFF_WAITER", "STAFF_BAR",
+  "STAFF_KITCHEN", "MANAGER_HOTEL", "STAFF_RECEPTION", "STAFF_HOUSEKEEPING", "MANAGER_RANCH",
+  "STAFF_EXPERIENCES", "STAFF_FIELD", "STAFF_STORE", "SUPERIOR", "MANAGER"
 ];
 
 export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?: string } }) {
@@ -69,12 +51,8 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
   const canDelete = hasPermission(me.role, "ADMIN_USERS_DELETE");
 
   const [q, setQ] = React.useState("");
-  
-  // Estados para Edición
   const [editingUser, setEditingUser] = React.useState<any>(null);
   const [formData, setFormData] = React.useState<any>({});
-  
-  // Estados para Creación
   const [isCreating, setIsCreating] = React.useState(false);
   const [newData, setNewData] = React.useState<any>({
     fullName: "",
@@ -108,6 +86,7 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
       role: user.role,
       primaryBusinessId: user.primaryBusinessId || "__NONE__",
       isActive: user.isActive,
+      requiresClockIn: user.requiresClockIn || false, // <-- Cargar valor
     });
   }
 
@@ -123,6 +102,7 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
         role: formData.role,
         primaryBusinessId: formData.primaryBusinessId === "__NONE__" ? null : formData.primaryBusinessId,
         isActive: formData.isActive,
+        requiresClockIn: formData.requiresClockIn, // <-- Enviar valor
       });
       setEditingUser(null);
     } catch (e: any) {
@@ -183,7 +163,6 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
               <Badge variant="secondary">{filtered.length} usuarios</Badge>
             </div>
             
-            {/* EL NUEVO BOTÓN PARA CREAR */}
             <Button size="sm" onClick={() => setIsCreating(true)} disabled={!canEdit} className="bg-primary hover:bg-primary/90">
               <PlusCircle className="w-4 h-4 mr-2" />
               Nuevo Usuario
@@ -238,9 +217,17 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
                       </TableCell>
 
                       <TableCell>
-                        <Badge variant={u.isActive ? "secondary" : "destructive"} className="font-normal">
-                          {u.isActive ? "Activo" : "Inactivo"}
-                        </Badge>
+                        <div className="flex flex-col gap-1">
+                          <Badge variant={u.isActive ? "secondary" : "destructive"} className="font-normal w-fit">
+                            {u.isActive ? "Activo" : "Inactivo"}
+                          </Badge>
+                          {/* INDICADOR VISUAL DE RELOJ OBLIGATORIO EN TABLA */}
+                          {u.requiresClockIn && (
+                            <Badge className="bg-orange-100 text-orange-700 border-orange-200 font-normal w-fit">
+                              <Clock className="w-3 h-3 mr-1" /> Reloj
+                            </Badge>
+                          )}
+                        </div>
                       </TableCell>
 
                       <TableCell className="text-right">
@@ -258,9 +245,7 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
         </CardContent>
       </Card>
 
-      {/* ======================================= */}
-      {/* MODAL PARA EDITAR USUARIO (EXISTENTE)   */}
-      {/* ======================================= */}
+      {/* MODAL DE EDICIÓN */}
       <Dialog open={!!editingUser} onOpenChange={(open) => !open && setEditingUser(null)}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
@@ -269,6 +254,22 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
 
           {editingUser && (
             <div className="grid gap-4 py-4">
+              
+              {/* --- NUEVO BLOQUE: RELOJ OBLIGATORIO --- */}
+              <div className="flex items-center justify-between p-3 border rounded-lg bg-orange-50/50 border-orange-100">
+                <div className="space-y-0.5">
+                  <div className="text-sm font-bold flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-orange-600" />
+                    Asistencia Obligatoria
+                  </div>
+                  <div className="text-xs text-muted-foreground">Exigir reloj checador para entrar al sistema.</div>
+                </div>
+                <Switch 
+                  checked={formData.requiresClockIn} 
+                  onCheckedChange={(v) => setFormData({ ...formData, requiresClockIn: v })} 
+                />
+              </div>
+
               <div className="flex items-center justify-between border-b pb-4">
                 <div className="space-y-0.5">
                   <Label>Acceso al Sistema</Label>
@@ -338,9 +339,7 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
         </DialogContent>
       </Dialog>
 
-      {/* ======================================= */}
-      {/* MODAL PARA CREAR NUEVO USUARIO          */}
-      {/* ======================================= */}
+      {/* MODAL DE CREACIÓN */}
       <Dialog open={isCreating} onOpenChange={setIsCreating}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
@@ -363,7 +362,7 @@ export function UsersManager({ boot, me }: { boot: Boot; me: { role: string; id?
             </div>
 
             <div className="space-y-2">
-              <Label>Correo Electrónico (Opcional pero recomendado)</Label>
+              <Label>Correo Electrónico</Label>
               <Input type="email" value={newData.email} onChange={(e) => setNewData({ ...newData, email: e.target.value })} placeholder="fulano@ejemplo.com" />
             </div>
 

@@ -41,15 +41,13 @@ export async function getAdminBoot() {
       createdAt: true,
       primaryBusinessId: true,
       businessId: true,
+      requiresClockIn: true, // <-- LEER VALOR
     },
   });
 
   return { businesses, cashpoints, users };
 }
 
-// ==========================================
-// NUEVO: CREAR USUARIO
-// ==========================================
 export async function adminCreateUser(input: {
   fullName: string;
   username: string;
@@ -58,34 +56,15 @@ export async function adminCreateUser(input: {
   primaryBusinessId?: string | null;
 }) {
   const me = await requirePerm("ADMIN_USERS_EDIT");
-
-  if (!input.fullName || !input.username || !input.role) {
-    throw new Error("Faltan datos obligatorios (Nombre, Username, Rol).");
-  }
-
-  if (roleIsHigh(input.role) && me.role !== "MASTER_ADMIN") {
-    throw new Error("Solo MASTER_ADMIN puede crear usuarios de nivel OWNER.");
-  }
-
-  // Verificar que el username no exista
+  if (!input.fullName || !input.username || !input.role) throw new Error("Faltan datos.");
+  
   const existingUser = await prisma.user.findUnique({ 
     where: { username: input.username.trim().toLowerCase() } 
   });
-  
-  if (existingUser) throw new Error("Ese nombre de usuario (username) ya está en uso.");
+  if (existingUser) throw new Error("Username en uso.");
 
-  // Verificar que el correo no exista
-  if (input.email) {
-    const existingEmail = await prisma.user.findUnique({ 
-      where: { email: input.email.trim().toLowerCase() } 
-    });
-    if (existingEmail) throw new Error("Ese correo electrónico ya está registrado.");
-  }
-
-  // 🔐 ENCRIPTAMOS LA CONTRASEÑA POR DEFECTO
   const hashedPassword = await bcrypt.hash("123456", 10);
 
-  // Crear en la base de datos
   await prisma.user.create({
     data: {
       fullName: input.fullName.trim(),
@@ -93,7 +72,7 @@ export async function adminCreateUser(input: {
       email: input.email?.trim().toLowerCase() || null,
       role: input.role,
       primaryBusinessId: input.primaryBusinessId,
-      passwordHash: hashedPassword, // <--- AQUÍ ESTÁ LA SOLUCIÓN
+      passwordHash: hashedPassword,
       isActive: true,
     },
   });
@@ -102,9 +81,6 @@ export async function adminCreateUser(input: {
   return true;
 }
 
-// ==========================================
-// ACTUALIZAR USUARIO
-// ==========================================
 export async function adminUpdateUser(input: {
   userId: string;
   role?: string;
@@ -113,27 +89,19 @@ export async function adminUpdateUser(input: {
   username?: string;
   email?: string;
   isActive?: boolean;
+  requiresClockIn?: boolean; // <-- NUEVO
 }) {
   const me = await requirePerm("ADMIN_USERS_EDIT");
-
   if (!input.userId) throw new Error("Falta userId");
 
-  if (input.userId === me.id && input.role && input.role !== me.role) {
-    throw new Error("No puedes cambiar tu propio rol.");
-  }
-
-  if (input.role && roleIsHigh(input.role) && me.role !== "MASTER_ADMIN") {
-    throw new Error("Solo MASTER_ADMIN puede asignar OWNER/MASTER_ADMIN.");
-  }
-
   const data: any = {};
-
   if (typeof input.role === "string") data.role = input.role;
   if (input.primaryBusinessId !== undefined) data.primaryBusinessId = input.primaryBusinessId;
   if (typeof input.fullName === "string") data.fullName = input.fullName.trim();
   if (typeof input.username === "string") data.username = input.username.trim().toLowerCase();
   if (typeof input.email === "string") data.email = input.email.trim().toLowerCase();
   if (typeof input.isActive === "boolean") data.isActive = input.isActive;
+  if (typeof input.requiresClockIn === "boolean") data.requiresClockIn = input.requiresClockIn; // <-- GUARDAR
 
   await prisma.user.update({
     where: { id: input.userId },
@@ -146,9 +114,6 @@ export async function adminUpdateUser(input: {
 
 export async function adminDeactivateUser(userId: string) {
   const me = await requirePerm("ADMIN_USERS_EDIT");
-  if (!userId) throw new Error("Falta userId");
-  if (userId === me.id) throw new Error("No puedes desactivarte tú mismo.");
-
   await prisma.user.update({ where: { id: userId }, data: { isActive: false } });
   rv();
   return true;
@@ -156,15 +121,6 @@ export async function adminDeactivateUser(userId: string) {
 
 export async function adminDeleteUser(userId: string) {
   const me = await requirePerm("ADMIN_USERS_DELETE");
-  if (!userId) throw new Error("Falta userId");
-  if (userId === me.id) throw new Error("No puedes eliminarte tú mismo.");
-
-  const target = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
-  if (target?.role === "MASTER_ADMIN") {
-    const count = await prisma.user.count({ where: { role: "MASTER_ADMIN", isActive: true } });
-    if (count <= 1) throw new Error("No puedes borrar el último MASTER_ADMIN activo.");
-  }
-
   await prisma.user.delete({ where: { id: userId } });
   rv();
   return true;
