@@ -110,7 +110,7 @@ export default function ClockInBlocker({ userName, userId }: { userName: string,
             </div>
             <textarea 
               className="w-full p-2 text-sm border rounded-md bg-white focus:ring-2 focus:ring-primary outline-none resize-none transition-all border-slate-300"
-              placeholder="¿Qué actividad realizarás hoy? (Ej: Recepción, Limpieza, Almacén...)"
+              placeholder="Nota de actividad (¿Qué harás hoy? ¿Alguna observación?)"
               rows={2}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
