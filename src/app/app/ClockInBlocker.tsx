@@ -4,52 +4,56 @@ import { useState, useRef, useCallback } from "react";
 import Webcam from "react-webcam";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label"; // Asegúrate de tener este componente de shadcn
-import { Textarea } from "@/components/ui/textarea"; // O usa un <textarea> estándar
-import { Clock, MapPin, Camera, RefreshCw, CheckCircle2, Loader2, MessageSquare } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { Clock, MapPin, Camera, RefreshCw, CheckCircle2, Loader2, MessageSquare } from "lucide-center";
 import { forceClockIn } from "@/lib/payroll.actions";
+
+// ✅ 1. AQUÍ VA LA CONFIGURACIÓN DE LA CÁMARA (FUERA DEL COMPONENTE)
+const videoConstraints = {
+  width: 480,
+  height: 360,
+  facingMode: "user",
+};
 
 export default function ClockInBlocker({ userName, userId }: { userName: string, userId: string }) {
   const [loading, setLoading] = useState(false);
   const [imgSrc, setImgSrc] = useState<string | null>(null);
-  const [notes, setNotes] = useState(""); // <--- ESTADO PARA LAS NOTAS
+  const [notes, setNotes] = useState("");
   const webcamRef = useRef<Webcam>(null);
 
-  // Capturar foto de la webcam
-const capture = useCallback(() => {
-  // screenshotQuality: 0.5 reduce el peso de la imagen a la mitad sin perder mucha vista
-  const imageSrc = webcamRef.current?.getScreenshot({ quality: 0.5 }); 
-  if (imageSrc) setImgSrc(imageSrc);
-}, [webcamRef]);
+  // ✅ 2. CAPTURAR CON COMPRESIÓN (quality: 0.5)
+  const capture = useCallback(() => {
+    if (webcamRef.current) {
+      const imageSrc = webcamRef.current.getScreenshot({ quality: 0.5 });
+      if (imageSrc) setImgSrc(imageSrc);
+    }
+  }, [webcamRef]);
 
-const handleClockIn = () => {
-  if (!imgSrc) return alert("Por favor, tómate una foto primero.");
-  setLoading(true);
-  
-  const processClockIn = async (lat?: number, lng?: number) => {
-    try {
-      // Intentamos el envío
-      const result = await forceClockIn(userId, lat, lng, imgSrc, notes);
-      if (result) {
-        // Si todo sale bien, refrescamos
+  const handleClockIn = async () => {
+    if (!imgSrc) return alert("Por favor, tómate una foto primero.");
+    setLoading(true);
+
+    const process = async (lat?: number, lng?: number) => {
+      try {
+        await forceClockIn(userId, lat, lng, imgSrc, notes);
+        // Si tiene éxito, el revalidatePath del servidor hará su magia o refrescamos manual:
         window.location.reload();
+      } catch (error: any) {
+        console.error(error);
+        alert("Error al registrar: La imagen es muy pesada o hay falla de red.");
+        setLoading(false);
       }
-    } catch (error: any) {
-      console.error("Error detallado:", error);
-      alert("Error del servidor: La foto es muy pesada o hay un problema de conexión.");
-      setLoading(false);
+    };
+
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => process(pos.coords.latitude, pos.coords.longitude),
+        () => process()
+      );
+    } else {
+      process();
     }
   };
-
-  if ("geolocation" in navigator) {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => processClockIn(pos.coords.latitude, pos.coords.longitude),
-      () => processClockIn()
-    );
-  } else {
-    processClockIn();
-  }
-};
 
   return (
     <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
@@ -62,7 +66,7 @@ const handleClockIn = () => {
           <div>
             <h1 className="text-xl font-bold">¡Hola, {userName}!</h1>
             <p className="text-muted-foreground mt-1 text-xs">
-              Es necesario registrar tu foto, ubicación y actividad para entrar.
+              Registro de asistencia obligatorio para acceso al sistema.
             </p>
           </div>
 
@@ -74,7 +78,7 @@ const handleClockIn = () => {
                   audio={false}
                   ref={webcamRef}
                   screenshotFormat="image/jpeg"
-                  videoConstraints={{ facingMode: "user" }}
+                  videoConstraints={videoConstraints} // ✅ USANDO LOS CONSTRAINTS AQUÍ
                   className="w-full h-full object-cover"
                 />
                 <Button 
@@ -105,17 +109,15 @@ const handleClockIn = () => {
             )}
           </div>
 
-          {/* CAMPO DE NOTAS */}
+          {/* NOTAS */}
           <div className="space-y-2 text-left bg-slate-50 p-3 rounded-lg border border-slate-200">
             <div className="flex items-center gap-2 mb-1">
               <MessageSquare className="w-4 h-4 text-slate-500" />
-              <Label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                Actividad / Notas
-              </Label>
+              <Label className="text-xs font-bold text-slate-700 uppercase tracking-wider">Actividad / Notas</Label>
             </div>
             <textarea 
-              className="w-full p-2 text-sm border rounded-md bg-white focus:ring-2 focus:ring-primary outline-none resize-none transition-all border-slate-300"
-              placeholder="Nota de actividad (¿Qué harás hoy? ¿Alguna observación?)"
+              className="w-full p-2 text-sm border rounded-md bg-white outline-none resize-none border-slate-300 focus:ring-2 focus:ring-primary"
+              placeholder="¿Qué harás hoy?"
               rows={2}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
@@ -124,30 +126,20 @@ const handleClockIn = () => {
           </div>
 
           <div className="bg-blue-50 p-2 rounded-lg flex items-center justify-center gap-2 text-blue-700 text-[10px] font-medium uppercase tracking-wider">
-            <MapPin className="w-3 h-3" />
-            Ubicación GPS Requerida
+            <MapPin className="w-3 h-3" /> GPS Requerido
           </div>
 
           <div className="space-y-3">
             {!imgSrc ? (
-              <p className="text-sm font-medium text-orange-600 animate-pulse">
-                Primero toma tu foto para habilitar el registro
-              </p>
+              <p className="text-sm font-medium text-orange-600 animate-pulse">Tómate la foto para continuar</p>
             ) : (
               <Button 
                 size="lg" 
-                className="w-full text-lg h-14 bg-green-600 hover:bg-green-700 shadow-md transition-all active:scale-95" 
+                className="w-full text-lg h-14 bg-green-600 hover:bg-green-700 shadow-md" 
                 onClick={handleClockIn}
                 disabled={loading}
               >
-                {loading ? (
-                  <>
-                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                    Enviando registro...
-                  </>
-                ) : (
-                  "Confirmar y Enviar Check"
-                )}
+                {loading ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Subiendo...</> : "Confirmar Check"}
               </Button>
             )}
           </div>
