@@ -36,11 +36,9 @@ export async function approveWorkDay(id: string) {
 
 export async function deleteWorkDay(id: string) {
   if (!id) throw new Error("Falta el ID del registro");
-  // 1. Borramos las checadas
   await prisma.timePunch.deleteMany({
     where: { workDayId: id }
   });
-  // 2. Borramos el día de trabajo
   await prisma.workDay.delete({
     where: { id }
   });
@@ -85,17 +83,18 @@ export async function forceClockIn(
         }
       });
 
-// 2. Crear la checada vinculada
-    return await tx.timePunch.create({
-      data: {
-        workDayId: workDay.id,
-        type: "ENTRADA",
-        deviceType: "MOBILE",
-        gpsLat: gpsLat || null,
-        gpsLng: gpsLng || null,
-        photoUrl: photoUrl || null,
-        note: notes || null, // <--- AQUÍ: El campo en la DB es 'note'
-      }
+      // 2. Crear la checada vinculada
+      return await tx.timePunch.create({
+        data: {
+          workDayId: workDay.id,
+          type: "ENTRADA",
+          deviceType: "MOBILE",
+          gpsLat: gpsLat || null,
+          gpsLng: gpsLng || null,
+          photoUrl: photoUrl || null,
+          note: notes || null, // Mapeamos 'notes' del cliente a 'note' de la DB
+        }
+      });
     });
 
     revalidatePath("/", "layout");
