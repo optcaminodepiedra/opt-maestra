@@ -5,11 +5,12 @@ const nextConfig: NextConfig = {
     // Ignoramos errores de tipos para que el deploy no se detenga por minucias
     ignoreBuildErrors: true,
   },
-
-experimental: {
+  
+  experimental: {
     serverActions: {
-      bodySizeLimit: '4mb', // <--- ESTO ES LO QUE FALTA
+      bodySizeLimit: '4mb',
     },
+  },
 };
 
 export default nextConfig;
