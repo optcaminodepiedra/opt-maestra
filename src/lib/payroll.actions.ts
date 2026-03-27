@@ -2,11 +2,11 @@
 
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
+
 // ==============================
 // ✅ LECTURA DE NÓMINA
 // ==============================
 export async function getPayrollRecords() {
-  // Buscamos todos los días de trabajo, ordenados del más reciente al más antiguo
   const records = await prisma.workDay.findMany({
     orderBy: { date: "desc" },
     include: {
@@ -18,30 +18,35 @@ export async function getPayrollRecords() {
       }
     }
   });
-
   return records;
 }
 
 // ==============================
 // ✅ ACCIONES DE ADMINISTRADOR
 // ==============================
-
 export async function approveWorkDay(id: string) {
   if (!id) throw new Error("Falta el ID del registro");
-
   await prisma.workDay.update({
     where: { id },
     data: { status: "APPROVED" }
   });
-
   revalidatePath("/app/payroll");
   return true;
 }
 
 export async function deleteWorkDay(id: string) {
   if (!id) throw new Error("Falta el ID del registro");
+  await prisma.timePunch.deleteMany({ where: { workDayId: id } });
+  await prisma.workDay.delete({ where: { id } });
+  revalidatePath("/app/payroll");
+  revalidatePath("/app/owner");
+  return true;
+}
 
-  export async function forceClockIn(userId: string, gpsLat?: number, gpsLng?: number, photoUrl?: string) {
+// ==============================
+// ✅ ACCIÓN DE CHECADO (CON FOTO)
+// ==============================
+export async function forceClockIn(userId: string, gpsLat?: number, gpsLng?: number, photoUrl?: string) {
   if (!userId) throw new Error("Usuario no válido");
 
   const today = new Date();
@@ -56,7 +61,7 @@ export async function deleteWorkDay(id: string) {
     }
   });
 
-  // 2. Registramos la entrada con la FOTO y el GPS
+  // 2. Registramos la entrada
   await prisma.timePunch.create({
     data: {
       workDayId: workDay.id,
@@ -64,7 +69,7 @@ export async function deleteWorkDay(id: string) {
       deviceType: "MOBILE",
       gpsLat,
       gpsLng,
-      photoUrl, // <--- Guardamos el Base64 de la cámara
+      photoUrl, // El Base64 de la cámara
     }
   });
 
@@ -74,13 +79,10 @@ export async function deleteWorkDay(id: string) {
 
 export async function toggleUserClockIn(userId: string, requiresClockIn: boolean) {
   if (!userId) throw new Error("Falta el ID del usuario");
-
   await prisma.user.update({
     where: { id: userId },
     data: { requiresClockIn }
   });
-
-  // Refresca la vista donde tengas tu tabla de usuarios
-  revalidatePath("/app/settings/users"); 
+  revalidatePath("/app/owner/users"); 
   return true;
 }
