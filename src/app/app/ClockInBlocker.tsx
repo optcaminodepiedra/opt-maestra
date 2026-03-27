@@ -4,12 +4,15 @@ import { useState, useRef, useCallback } from "react";
 import Webcam from "react-webcam";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Clock, MapPin, Camera, RefreshCw, CheckCircle2, Loader2 } from "lucide-react";
+import { Label } from "@/components/ui/label"; // Asegúrate de tener este componente de shadcn
+import { Textarea } from "@/components/ui/textarea"; // O usa un <textarea> estándar
+import { Clock, MapPin, Camera, RefreshCw, CheckCircle2, Loader2, MessageSquare } from "lucide-react";
 import { forceClockIn } from "@/lib/payroll.actions";
 
 export default function ClockInBlocker({ userName, userId }: { userName: string, userId: string }) {
   const [loading, setLoading] = useState(false);
   const [imgSrc, setImgSrc] = useState<string | null>(null);
+  const [notes, setNotes] = useState(""); // <--- ESTADO PARA LAS NOTAS
   const webcamRef = useRef<Webcam>(null);
 
   // Capturar foto de la webcam
@@ -26,8 +29,8 @@ export default function ClockInBlocker({ userName, userId }: { userName: string,
       navigator.geolocation.getCurrentPosition(
         async (position) => {
           try {
-            await forceClockIn(userId, position.coords.latitude, position.coords.longitude, imgSrc);
-            // El revalidatePath hará el resto
+            // Pasamos las notas como 5to argumento
+            await forceClockIn(userId, position.coords.latitude, position.coords.longitude, imgSrc, notes);
           } catch (error) {
             alert("Error al registrar entrada.");
             setLoading(false);
@@ -35,11 +38,11 @@ export default function ClockInBlocker({ userName, userId }: { userName: string,
         },
         async () => {
           alert("No pudimos obtener ubicación, pero registraremos tu entrada con la foto.");
-          await forceClockIn(userId, undefined, undefined, imgSrc);
+          await forceClockIn(userId, undefined, undefined, imgSrc, notes);
         }
       );
     } else {
-      forceClockIn(userId, undefined, undefined, imgSrc);
+      forceClockIn(userId, undefined, undefined, imgSrc, notes);
     }
   };
 
@@ -54,7 +57,7 @@ export default function ClockInBlocker({ userName, userId }: { userName: string,
           <div>
             <h1 className="text-xl font-bold">¡Hola, {userName}!</h1>
             <p className="text-muted-foreground mt-1 text-xs">
-              Es necesario registrar tu foto y ubicación para entrar.
+              Es necesario registrar tu foto, ubicación y actividad para entrar.
             </p>
           </div>
 
@@ -89,11 +92,30 @@ export default function ClockInBlocker({ userName, userId }: { userName: string,
                   variant="destructive"
                   size="sm"
                   className="absolute top-2 right-2 rounded-full h-8 w-8 p-0"
+                  disabled={loading}
                 >
                   <RefreshCw className="w-4 h-4" />
                 </Button>
               </div>
             )}
+          </div>
+
+          {/* CAMPO DE NOTAS */}
+          <div className="space-y-2 text-left bg-slate-50 p-3 rounded-lg border border-slate-200">
+            <div className="flex items-center gap-2 mb-1">
+              <MessageSquare className="w-4 h-4 text-slate-500" />
+              <Label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                Actividad / Notas
+              </Label>
+            </div>
+            <textarea 
+              className="w-full p-2 text-sm border rounded-md bg-white focus:ring-2 focus:ring-primary outline-none resize-none transition-all border-slate-300"
+              placeholder="¿Qué actividad realizarás hoy? (Ej: Recepción, Limpieza, Almacén...)"
+              rows={2}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              disabled={loading}
+            />
           </div>
 
           <div className="bg-blue-50 p-2 rounded-lg flex items-center justify-center gap-2 text-blue-700 text-[10px] font-medium uppercase tracking-wider">
@@ -104,19 +126,19 @@ export default function ClockInBlocker({ userName, userId }: { userName: string,
           <div className="space-y-3">
             {!imgSrc ? (
               <p className="text-sm font-medium text-orange-600 animate-pulse">
-                Pulsa el botón de la cámara para tomarte la foto
+                Primero toma tu foto para habilitar el registro
               </p>
             ) : (
               <Button 
                 size="lg" 
-                className="w-full text-lg h-14 bg-green-600 hover:bg-green-700 shadow-md" 
+                className="w-full text-lg h-14 bg-green-600 hover:bg-green-700 shadow-md transition-all active:scale-95" 
                 onClick={handleClockIn}
                 disabled={loading}
               >
                 {loading ? (
                   <>
                     <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                    Subiendo Check...
+                    Enviando registro...
                   </>
                 ) : (
                   "Confirmar y Enviar Check"

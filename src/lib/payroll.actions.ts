@@ -46,7 +46,13 @@ export async function deleteWorkDay(id: string) {
 // ==============================
 // ✅ ACCIÓN DE CHECADO (CON FOTO)
 // ==============================
-export async function forceClockIn(userId: string, gpsLat?: number, gpsLng?: number, photoUrl?: string) {
+export async function forceClockIn(
+  userId: string, 
+  gpsLat?: number, 
+  gpsLng?: number, 
+  photoUrl?: string,
+  notes?: string // <--- NUEVO PARÁMETRO
+) {
   if (!userId) throw new Error("Usuario no válido");
 
   const today = new Date();
@@ -61,7 +67,7 @@ export async function forceClockIn(userId: string, gpsLat?: number, gpsLng?: num
     }
   });
 
-  // 2. Registramos la entrada
+  // 2. Registramos la entrada con la NOTA
   await prisma.timePunch.create({
     data: {
       workDayId: workDay.id,
@@ -69,7 +75,8 @@ export async function forceClockIn(userId: string, gpsLat?: number, gpsLng?: num
       deviceType: "MOBILE",
       gpsLat,
       gpsLng,
-      photoUrl, // El Base64 de la cámara
+      photoUrl,
+      notes, // <--- GUARDAMOS LA NOTA AQUÍ
     }
   });
 
