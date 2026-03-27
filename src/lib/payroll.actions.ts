@@ -85,18 +85,17 @@ export async function forceClockIn(
         }
       });
 
-      // 2. Crear la checada vinculada
-      return await tx.timePunch.create({
-        data: {
-          workDayId: workDay.id,
-          type: "ENTRADA",
-          deviceType: "MOBILE",
-          gpsLat: gpsLat || null,
-          gpsLng: gpsLng || null,
-          photoUrl: photoUrl || null,
-          notes: notes || null,
-        }
-      });
+// 2. Crear la checada vinculada
+    return await tx.timePunch.create({
+      data: {
+        workDayId: workDay.id,
+        type: "ENTRADA",
+        deviceType: "MOBILE",
+        gpsLat: gpsLat || null,
+        gpsLng: gpsLng || null,
+        photoUrl: photoUrl || null,
+        note: notes || null, // <--- AQUÍ: El campo en la DB es 'note'
+      }
     });
 
     revalidatePath("/", "layout");
