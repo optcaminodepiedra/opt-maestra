@@ -46,42 +46,39 @@ export async function deleteWorkDay(id: string) {
 // ==============================
 // ✅ ACCIÓN DE CHECADO (CON FOTO)
 // ==============================
-export async function forceClockIn(
-  userId: string, 
-  gpsLat?: number, 
-  gpsLng?: number, 
-  photoUrl?: string,
-  notes?: string // <--- NUEVO PARÁMETRO
-) {
+export async function forceClockIn(userId: string, gpsLat?: number, gpsLng?: number, photoUrl?: string, notes?: string) {
   if (!userId) throw new Error("Usuario no válido");
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // 1. Creamos el Día de Trabajo
-  const workDay = await prisma.workDay.create({
-    data: {
-      userId: userId,
-      date: today,
-      status: "OPEN",
-    }
-  });
+  // Usamos una transacción: O se guarda todo, o nada.
+  return await prisma.$transaction(async (tx) => {
+    // 1. Creamos el Día de Trabajo
+    const workDay = await tx.workDay.create({
+      data: {
+        userId: userId,
+        date: today,
+        status: "OPEN",
+      }
+    });
 
-  // 2. Registramos la entrada con la NOTA
-  await prisma.timePunch.create({
-    data: {
-      workDayId: workDay.id,
-      type: "ENTRADA",
-      deviceType: "MOBILE",
-      gpsLat,
-      gpsLng,
-      photoUrl,
-      notes, // <--- GUARDAMOS LA NOTA AQUÍ
-    }
-  });
+    // 2. Registramos la entrada
+    await tx.timePunch.create({
+      data: {
+        workDayId: workDay.id,
+        type: "ENTRADA",
+        deviceType: "MOBILE",
+        gpsLat,
+        gpsLng,
+        photoUrl, // El Base64 comprimido
+        notes,
+      }
+    });
 
-  revalidatePath("/", "layout");
-  return true;
+    revalidatePath("/", "layout");
+    return true;
+  });
 }
 
 export async function toggleUserClockIn(userId: string, requiresClockIn: boolean) {

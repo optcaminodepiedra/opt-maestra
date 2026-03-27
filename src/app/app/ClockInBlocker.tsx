@@ -16,35 +16,40 @@ export default function ClockInBlocker({ userName, userId }: { userName: string,
   const webcamRef = useRef<Webcam>(null);
 
   // Capturar foto de la webcam
-  const capture = useCallback(() => {
-    const imageSrc = webcamRef.current?.getScreenshot();
-    if (imageSrc) setImgSrc(imageSrc);
-  }, [webcamRef]);
+const capture = useCallback(() => {
+  // screenshotQuality: 0.5 reduce el peso de la imagen a la mitad sin perder mucha vista
+  const imageSrc = webcamRef.current?.getScreenshot({ quality: 0.5 }); 
+  if (imageSrc) setImgSrc(imageSrc);
+}, [webcamRef]);
 
-  const handleClockIn = () => {
-    if (!imgSrc) return alert("Por favor, tómate una foto primero.");
-    setLoading(true);
-    
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          try {
-            // Pasamos las notas como 5to argumento
-            await forceClockIn(userId, position.coords.latitude, position.coords.longitude, imgSrc, notes);
-          } catch (error) {
-            alert("Error al registrar entrada.");
-            setLoading(false);
-          }
-        },
-        async () => {
-          alert("No pudimos obtener ubicación, pero registraremos tu entrada con la foto.");
-          await forceClockIn(userId, undefined, undefined, imgSrc, notes);
-        }
-      );
-    } else {
-      forceClockIn(userId, undefined, undefined, imgSrc, notes);
+const handleClockIn = () => {
+  if (!imgSrc) return alert("Por favor, tómate una foto primero.");
+  setLoading(true);
+  
+  const processClockIn = async (lat?: number, lng?: number) => {
+    try {
+      // Intentamos el envío
+      const result = await forceClockIn(userId, lat, lng, imgSrc, notes);
+      if (result) {
+        // Si todo sale bien, refrescamos
+        window.location.reload();
+      }
+    } catch (error: any) {
+      console.error("Error detallado:", error);
+      alert("Error del servidor: La foto es muy pesada o hay un problema de conexión.");
+      setLoading(false);
     }
   };
+
+  if ("geolocation" in navigator) {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => processClockIn(pos.coords.latitude, pos.coords.longitude),
+      () => processClockIn()
+    );
+  } else {
+    processClockIn();
+  }
+};
 
   return (
     <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
