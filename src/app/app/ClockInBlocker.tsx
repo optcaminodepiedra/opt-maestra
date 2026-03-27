@@ -5,13 +5,12 @@ import Webcam from "react-webcam";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Clock, MapPin, Camera, RefreshCw, CheckCircle2, Loader2, MessageSquare } from "lucide-react"; // Corregido lucide-react
+import { Clock, MapPin, Camera, RefreshCw, CheckCircle2, Loader2, MessageSquare } from "lucide-react"; 
 import { forceClockIn } from "@/lib/payroll.actions";
 
-// ✅ 1. RESOLUCIÓN MÁS BAJA (Suficiente para identificación facial)
 const videoConstraints = {
-  width: 320, 
-  height: 240,
+  width: 480, // Resolución estándar
+  height: 360,
   facingMode: "user",
 };
 
@@ -21,11 +20,10 @@ export default function ClockInBlocker({ userName, userId }: { userName: string,
   const [notes, setNotes] = useState("");
   const webcamRef = useRef<Webcam>(null);
 
-  // ✅ 2. CAPTURAR CON COMPRESIÓN AGRESIVA (quality: 0.3)
   const capture = useCallback(() => {
     if (webcamRef.current) {
-      // Bajamos a 0.3 de calidad. El archivo pesará menos de 100KB
-      const imageSrc = webcamRef.current.getScreenshot({ quality: 0.3 });
+      // ✅ CAMBIO A WEBP CON CALIDAD 0.4 (Muy ligero, buena calidad)
+      const imageSrc = webcamRef.current.getScreenshot({ quality: 0.4 });
       if (imageSrc) setImgSrc(imageSrc);
     }
   }, [webcamRef]);
@@ -36,17 +34,15 @@ export default function ClockInBlocker({ userName, userId }: { userName: string,
 
     const process = async (lat?: number, lng?: number) => {
       try {
-        // Log para ver el tamaño en consola antes de enviar (opcional para debug)
-        console.log("Tamaño string imagen:", imgSrc.length);
-        
+        // En Next.js 15+ es mejor forzar que la respuesta sea esperada
         const response = await forceClockIn(userId, lat, lng, imgSrc, notes);
-        
         if (response) {
           window.location.reload();
         }
       } catch (error: any) {
         console.error("Error en Server Action:", error);
-        alert("Error de red: El servidor rechazó la imagen por tamaño. Intenta tomarla de nuevo.");
+        // El error 500 usualmente viene de Vercel cortando el body
+        alert("Error: El servidor no pudo procesar la imagen. Intenta tomarla de nuevo.");
         setLoading(false);
       }
     };
@@ -55,7 +51,7 @@ export default function ClockInBlocker({ userName, userId }: { userName: string,
       navigator.geolocation.getCurrentPosition(
         (pos) => process(pos.coords.latitude, pos.coords.longitude),
         () => process(),
-        { timeout: 5000 } // Timeout para que no se quede colgado el GPS
+        { timeout: 5000 }
       );
     } else {
       process();
@@ -73,17 +69,17 @@ export default function ClockInBlocker({ userName, userId }: { userName: string,
           <div>
             <h1 className="text-xl font-bold tracking-tight">¡Hola, {userName}!</h1>
             <p className="text-muted-foreground mt-1 text-[10px] leading-relaxed">
-              Tómate una foto rápida y escribe tu actividad para entrar.
+              Tómate una foto rápida para entrar.
             </p>
           </div>
 
-          <div className="relative w-64 h-48 mx-auto bg-black rounded-xl overflow-hidden border-2 border-muted shadow-inner">
+          <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden border-2 border-muted shadow-inner">
             {!imgSrc ? (
               <>
                 <Webcam
                   audio={false}
                   ref={webcamRef}
-                  screenshotFormat="image/jpeg"
+                  screenshotFormat="image/webp" // ✅ CAMBIADO A WEBP
                   videoConstraints={videoConstraints}
                   className="w-full h-full object-cover"
                 />
@@ -118,11 +114,11 @@ export default function ClockInBlocker({ userName, userId }: { userName: string,
           <div className="space-y-2 text-left px-2">
             <div className="flex items-center gap-2">
               <MessageSquare className="w-4 h-4 text-slate-400" />
-              <Label className="text-[10px] font-bold text-slate-500 uppercase">Notas de actividad</Label>
+              <Label className="text-[10px] font-bold text-slate-500 uppercase">Actividad</Label>
             </div>
             <textarea 
               className="w-full p-2 text-sm border rounded-md bg-white outline-none resize-none border-slate-200 focus:ring-2 focus:ring-primary"
-              placeholder="Ej: Recepción, Mantenimiento..."
+              placeholder="¿Qué harás hoy?"
               rows={2}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
@@ -132,11 +128,11 @@ export default function ClockInBlocker({ userName, userId }: { userName: string,
 
           <div className="space-y-3 px-2">
             {!imgSrc ? (
-              <p className="text-[11px] font-medium text-orange-600">Falta la foto de asistencia</p>
+              <p className="text-[11px] font-medium text-orange-600">Captura foto primero</p>
             ) : (
               <Button 
                 size="lg" 
-                className="w-full h-12 bg-green-600 hover:bg-green-700 shadow-md transition-all active:scale-95" 
+                className="w-full h-12 bg-green-600 hover:bg-green-700 shadow-md" 
                 onClick={handleClockIn}
                 disabled={loading}
               >

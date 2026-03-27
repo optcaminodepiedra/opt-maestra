@@ -2,13 +2,12 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   typescript: {
-    // Ignoramos errores de tipos para que el deploy no se detenga por minucias
     ignoreBuildErrors: true,
   },
   
   experimental: {
     serverActions: {
-      bodySizeLimit: '4mb',
+      bodySizeLimit: '10mb', // <--- Subimos el límite para que no haya duda
     },
   },
 };
