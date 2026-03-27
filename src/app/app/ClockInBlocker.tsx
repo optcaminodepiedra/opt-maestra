@@ -5,7 +5,7 @@ import Webcam from "react-webcam";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Clock, MapPin, Camera, RefreshCw, CheckCircle2, Loader2, MessageSquare } from "lucide-center";
+import { Clock, MapPin, Camera, RefreshCw, CheckCircle2, Loader2, MessageSquare } from "lucide-react";
 import { forceClockIn } from "@/lib/payroll.actions";
 
 // ✅ 1. AQUÍ VA LA CONFIGURACIÓN DE LA CÁMARA (FUERA DEL COMPONENTE)
