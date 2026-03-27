@@ -6,10 +6,10 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
 
-  // Forzamos a que las páginas se generen dinámicamente si la DB falla en el build
-  experimental: {
-    // Si usas App Router, esto ayuda con la estabilidad de las rutas
-  }
+experimental: {
+    serverActions: {
+      bodySizeLimit: '4mb', // <--- ESTO ES LO QUE FALTA
+    },
 };
 
 export default nextConfig;
