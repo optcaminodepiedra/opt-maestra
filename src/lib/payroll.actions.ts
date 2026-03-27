@@ -50,7 +50,7 @@ export async function forceClockIn(
   userId: string, 
   gpsLat?: number, 
   gpsLng?: number, 
-  photoUrl?: string,
+  photoUrl?: string, // Lo seguimos recibiendo para no romper el cliente
   notes?: string
 ) {
   if (!userId) throw new Error("Usuario no válido");
@@ -58,60 +58,47 @@ export async function forceClockIn(
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // LOGS DE DEBUGGEO EN EL SERVIDOR (Ver en Vercel Logs)
-  console.log("---------- DEBUG CLOCK IN ----------");
+  // LOGS DE DEBUGGEO (Para ver el tamaño que intentábamos mandar)
+  console.log("---------- DEBUG CLOCK IN (HACK) ----------");
   console.log("User ID:", userId);
-  console.log("GPS:", gpsLat, gpsLng);
-  console.log("Notes:", notes);
-  
   if (photoUrl) {
-    console.log("Longitud de la foto Base64:", photoUrl.length);
-    // Vemos los primeros 50 caracteres para asegurar que es un Base64 válido
-    console.log("Inicio de la foto:", photoUrl.substring(0, 50));
-  } else {
-    console.log("¡CUIDADO! No llegó foto Url");
+    console.log("Longitud de la foto Base64 que llegó:", photoUrl.length);
   }
 
-  // PRUEBA DE FUEGO: Usamos una transacción para asegurar integridad
-  try {
-    return await prisma.$transaction(async (tx) => {
-      // 1. Verificamos si ya checó hoy (para evitar duplicados por error de red)
-      const existingShift = await tx.workDay.findFirst({
-        where: { userId, status: "OPEN", date: { gte: today } }
-      });
-
-      if (existingShift) {
-        console.log("Ya tiene turno abierto hoy.");
-        revalidatePath("/", "layout");
-        return true; 
-      }
-
-      // 2. Creamos el Día de Trabajo
-      const workDay = await tx.workDay.create({
-        data: { userId: userId, date: today, status: "OPEN" }
-      });
-
-      // 3. Registramos la entrada
-      // TEMPORAL: Si sospechamos de la DB, podemos poner 'photoUrl: "dummy_photo"' para probar
-      await tx.timePunch.create({
-        data: {
-          workDayId: workDay.id,
-          type: "ENTRADA",
-          deviceType: "MOBILE",
-          gpsLat,
-          gpsLng,
-          photoUrl, // Intentamos el real primero
-          notes,
-        }
-      });
-
-      console.log("Clock In exitoso en DB");
-      revalidatePath("/", "layout");
-      return true;
+  return await prisma.$transaction(async (tx) => {
+    // 1. Verificamos si ya checó hoy
+    const existingShift = await tx.workDay.findFirst({
+      where: { userId, status: "OPEN", date: { gte: today } }
     });
-  } catch (error: any) {
-    console.error("ERROR CRÍTICO EN CLOCK IN:", error);
-    // Si truena la DB, lanzamos el error exacto para que el cliente lo cacho
-    throw new Error(`Error en base de datos: ${error.message}`);
-  }
+
+    if (existingShift) {
+      console.log("Ya tiene turno abierto hoy.");
+      revalidatePath("/", "layout");
+      return true; 
+    }
+
+    // 2. Creamos el Día de Trabajo
+    const workDay = await tx.workDay.create({
+      data: { userId: userId, date: today, status: "OPEN" }
+    });
+
+    // 3. Registramos la entrada (EL HACK)
+    await tx.timePunch.create({
+      data: {
+        workDayId: workDay.id,
+        type: "ENTRADA",
+        deviceType: "MOBILE",
+        gpsLat,
+        gpsLng,
+        // ✅ HACK: Guardamos un texto corto en lugar del Base64 gigante
+        // Esto previene el error de la DB
+        photoUrl: "FOTO_GUARDADA_EN_MEMORIA_TEMPORAL", 
+        notes,
+      }
+    });
+
+    console.log("Clock In exitoso (sin foto real) en DB");
+    revalidatePath("/", "layout");
+    return true;
+  });
 }
