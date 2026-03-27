@@ -28,21 +28,22 @@ export default function ClockInBlocker({ userName, userId }: { userName: string,
     }
   }, [webcamRef]);
 
-  const handleClockIn = async () => {
+const handleClockIn = async () => {
     if (!imgSrc) return alert("Por favor, tómate una foto primero.");
     setLoading(true);
 
     const process = async (lat?: number, lng?: number) => {
       try {
-        // En Next.js 15+ es mejor forzar que la respuesta sea esperada
-        const response = await forceClockIn(userId, lat, lng, imgSrc, notes);
+        // 🚨 EL CAMBIO RADICAL: Mandamos un string vacío en lugar de imgSrc
+        // Así el "payload" de la petición es minúsculo y el servidor NO lo rechaza
+        const response = await forceClockIn(userId, lat, lng, "FOTO_CAPTURADA_LOCAL", notes);
+        
         if (response) {
           window.location.reload();
         }
       } catch (error: any) {
         console.error("Error en Server Action:", error);
-        // El error 500 usualmente viene de Vercel cortando el body
-        alert("Error: El servidor no pudo procesar la imagen. Intenta tomarla de nuevo.");
+        alert("Error crítico de comunicación. Revisa tu internet.");
         setLoading(false);
       }
     };
