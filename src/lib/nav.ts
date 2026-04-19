@@ -296,3 +296,5 @@ export function getNavForRole(role: string): NavItem[] {
       children: item.children?.filter(child => child.roles.includes(role)),
     }))
 }
+// Alias para compatibilidad con el layout existente
+export const getNavByRole = getNavForRole;
