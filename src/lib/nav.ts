@@ -1,15 +1,43 @@
-// ─── Tipos ────────────────────────────────────────────────────────────────────
+/**
+ * lib/nav.ts
+ *
+ * Devuelve NavSection[] — exactamente la estructura que consume el Sidebar existente.
+ * Los nombres de íconos deben coincidir con el iconMap del Sidebar.tsx.
+ */
+
+// ─── Tipos (compatibles con Sidebar.tsx) ─────────────────────────────────────
+
+export type IconName =
+  | "dashboard" | "finance" | "sales" | "expenses" | "withdrawals"
+  | "reports" | "users" | "settings" | "tasks" | "kanban"
+  | "apps" | "reloj" | "restaurant" | "pos" | "kds" | "tables"
+  | "menu" | "hotel" | "museum" | "adventure" | "inventory"
+  | "payroll" | "iot";
 
 export type NavItem = {
   label: string
   href: string
-  icon: string
-  roles: string[]
+  icon: IconName
   badge?: string
-  children?: NavItem[]
 }
 
-// Todos los roles del sistema
+export type NavSection = {
+  title: string
+  icon?: IconName
+  items: NavItem[]
+}
+
+// ─── Todas las secciones del sistema ─────────────────────────────────────────
+// Cada sección tiene un array de roles que pueden verla.
+// Dentro de cada sección, cada ítem también tiene sus propios roles.
+
+type RoledSection = {
+  title: string
+  icon?: IconName
+  roles: string[]   // quién puede ver esta sección completa
+  items: (NavItem & { roles: string[] })[]
+}
+
 const ALL = [
   "MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT",
   "MANAGER_HOTEL","MANAGER_RANCH","ACCOUNTING","SALES","RESERVATIONS",
@@ -23,137 +51,136 @@ const MANAGERS = [
   "MANAGER_HOTEL","MANAGER_RANCH","MANAGER",
 ]
 
-// ─── Definición completa del menú ────────────────────────────────────────────
+const SECTIONS: RoledSection[] = [
+  // ── General ──────────────────────────────────────────────────────────────
+  {
+    title: "General",
+    icon: "apps",
+    roles: ALL,
+    items: [
+      { label: "Dashboard", href: "/app", icon: "dashboard", roles: ALL },
+      { label: "Checador", href: "/app/reloj", icon: "reloj", roles: ALL },
+      { label: "Tareas", href: "/app/ops/kanban/activities", icon: "tasks", roles: ALL },
+    ],
+  },
 
-export const NAV_ITEMS: NavItem[] = [
+  // ── Restaurante ──────────────────────────────────────────────────────────
   {
-    label: "Dashboard",
-    href: "/app",
-    icon: "LayoutDashboard",
-    roles: ALL,
-  },
-  {
-    label: "Restaurante",
-    href: "/app/restaurant",
-    icon: "UtensilsCrossed",
+    title: "Restaurante",
+    icon: "restaurant",
     roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","STAFF_WAITER","STAFF_BAR","STAFF_CASHIER","STAFF_KITCHEN","MANAGER"],
-    children: [
-      { label: "POS / Caja", href: "/app/restaurant/pos", icon: "ShoppingCart", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","STAFF_BAR","STAFF_CASHIER","MANAGER"] },
-      { label: "Mapa de mesas", href: "/app/restaurant/tables", icon: "Map", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","STAFF_WAITER","MANAGER"] },
-      { label: "Órdenes", href: "/app/restaurant/orders", icon: "ClipboardList", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","STAFF_WAITER","STAFF_BAR","STAFF_CASHIER","MANAGER"] },
-      { label: "Cocina (KDS)", href: "/app/restaurant/kds", icon: "ChefHat", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","STAFF_KITCHEN","MANAGER"] },
-      { label: "Menú", href: "/app/restaurant/menu", icon: "BookOpen", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","MANAGER"] },
-      { label: "Turnos", href: "/app/shifts", icon: "Timer", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","STAFF_CASHIER","MANAGER"] },
+    items: [
+      { label: "POS / Caja",    href: "/app/restaurant/pos",    icon: "pos",    roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","STAFF_BAR","STAFF_CASHIER","MANAGER"] },
+      { label: "Mesas",         href: "/app/restaurant/tables", icon: "tables", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","STAFF_WAITER","MANAGER"] },
+      { label: "Cocina (KDS)",  href: "/app/restaurant/kds",    icon: "kds",    roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","STAFF_KITCHEN","STAFF_BAR","MANAGER"] },
+      { label: "Menú",          href: "/app/restaurant/menu",   icon: "menu",   roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","MANAGER"] },
     ],
   },
+
+  // ── Hotel ────────────────────────────────────────────────────────────────
   {
-    label: "Hotel",
-    href: "/app/hotel",
-    icon: "BedDouble",
+    title: "Hotel",
+    icon: "hotel",
     roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_HOTEL","MANAGER_RANCH","RESERVATIONS","SALES","STAFF_RECEPTION","MANAGER"],
-    children: [
-      { label: "Reservaciones", href: "/app/hotel/reservations", icon: "CalendarCheck", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_HOTEL","MANAGER_RANCH","RESERVATIONS","SALES","STAFF_RECEPTION","MANAGER"] },
-      { label: "Habitaciones", href: "/app/hotel/rooms", icon: "Hotel", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_HOTEL","MANAGER_RANCH","STAFF_RECEPTION","MANAGER"] },
-      { label: "Front Desk", href: "/app/hotel/frontdesk", icon: "ConciergeBell", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_HOTEL","MANAGER_RANCH","STAFF_RECEPTION","MANAGER"] },
-      { label: "Housekeeping", href: "/app/hotel/housekeeping", icon: "Sparkles", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_HOTEL","STAFF_HOUSEKEEPING","MANAGER"] },
+    items: [
+      { label: "Reservaciones", href: "/app/hotel/reservations", icon: "hotel",  roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_HOTEL","MANAGER_RANCH","RESERVATIONS","SALES","STAFF_RECEPTION","MANAGER"] },
+      { label: "Habitaciones",  href: "/app/hotel/rooms",        icon: "hotel",  roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_HOTEL","MANAGER_RANCH","STAFF_RECEPTION","MANAGER"] },
+      { label: "Front Desk",    href: "/app/hotel/frontdesk",    icon: "hotel",  roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_HOTEL","MANAGER_RANCH","STAFF_RECEPTION","MANAGER"] },
+      { label: "Housekeeping",  href: "/app/hotel/housekeeping", icon: "hotel",  roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_HOTEL","STAFF_HOUSEKEEPING","MANAGER"] },
     ],
   },
+
+  // ── Inventario ───────────────────────────────────────────────────────────
   {
-    label: "Inventario",
-    href: "/app/inventory",
-    icon: "Boxes",
+    title: "Inventario",
+    icon: "inventory",
     roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","MANAGER_HOTEL","MANAGER_RANCH","ACCOUNTING","INVENTORY","STAFF_STORE","MANAGER"],
-    children: [
-      { label: "Stock", href: "/app/inventory", icon: "Package", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","MANAGER_HOTEL","MANAGER_RANCH","ACCOUNTING","INVENTORY","STAFF_STORE","MANAGER"] },
-      { label: "Requisiciones", href: "/app/inventory/requisitions", icon: "ClipboardPlus", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","MANAGER_HOTEL","MANAGER_RANCH","INVENTORY","MANAGER"] },
+    items: [
+      { label: "Stock",         href: "/app/inventory",              icon: "inventory", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","MANAGER_HOTEL","MANAGER_RANCH","ACCOUNTING","INVENTORY","STAFF_STORE","MANAGER"] },
+      { label: "Requisiciones", href: "/app/inventory/requisitions", icon: "kanban",    roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","MANAGER_HOTEL","MANAGER_RANCH","INVENTORY","MANAGER"] },
     ],
   },
+
+  // ── Experiencias ─────────────────────────────────────────────────────────
   {
-    label: "Experiencias",
-    href: "/app/adventure",
-    icon: "TreePine",
+    title: "Experiencias",
+    icon: "adventure",
     roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RANCH","STAFF_EXPERIENCES","STAFF_FIELD","MANAGER"],
-  },
-  {
-    label: "Tienda",
-    href: "/app/store",
-    icon: "Store",
-    roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","STAFF_STORE","MANAGER"],
-  },
-  {
-    label: "Finanzas",
-    href: "/app/reports",
-    icon: "TrendingUp",
-    roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","MANAGER_HOTEL","MANAGER_RANCH","ACCOUNTING","MANAGER"],
-    children: [
-      { label: "Reportes", href: "/app/reports", icon: "BarChart3", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","MANAGER_HOTEL","MANAGER_RANCH","ACCOUNTING","MANAGER"] },
-      { label: "Retiros", href: "/app/owner/withdrawals", icon: "Banknote", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","MANAGER_RANCH","ACCOUNTING","MANAGER"] },
-      { label: "Gastos", href: "/app/owner/expenses", icon: "Receipt", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","MANAGER_HOTEL","MANAGER_RANCH","ACCOUNTING","MANAGER"] },
-      { label: "Contabilidad", href: "/app/accounting", icon: "Calculator", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","ACCOUNTING"] },
+    items: [
+      { label: "Actividades", href: "/app/adventure", icon: "adventure", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RANCH","STAFF_EXPERIENCES","STAFF_FIELD","MANAGER"] },
     ],
   },
+
+  // ── Finanzas ─────────────────────────────────────────────────────────────
   {
-    label: "Tareas",
-    href: "/app/ops/kanban/activities",
-    icon: "CheckSquare",
-    roles: ALL,
+    title: "Finanzas",
+    icon: "finance",
+    roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","MANAGER_HOTEL","MANAGER_RANCH","ACCOUNTING","MANAGER"],
+    items: [
+      { label: "Reportes",      href: "/app/reports",            icon: "reports",     roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","MANAGER_HOTEL","MANAGER_RANCH","ACCOUNTING","MANAGER"] },
+      { label: "Gastos",        href: "/app/owner/expenses",     icon: "expenses",    roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","MANAGER_HOTEL","MANAGER_RANCH","MANAGER"] },
+      { label: "Retiros",       href: "/app/owner/withdrawals",  icon: "withdrawals", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","MANAGER_RANCH","MANAGER"] },
+      { label: "Ventas",        href: "/app/accounting",         icon: "sales",       roles: ["MASTER_ADMIN","OWNER","SUPERIOR","ACCOUNTING"] },
+    ],
   },
+
+  // ── RRHH ─────────────────────────────────────────────────────────────────
   {
-    label: "Asistencias",
-    href: "/app/payroll",
-    icon: "Fingerprint",
+    title: "RRHH",
+    icon: "payroll",
     roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","MANAGER_HOTEL","MANAGER_RANCH","ACCOUNTING","INVENTORY","MANAGER"],
+    items: [
+      { label: "Asistencias", href: "/app/payroll",    icon: "payroll", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","MANAGER_HOTEL","MANAGER_RANCH","ACCOUNTING","INVENTORY","MANAGER"] },
+      { label: "Vacaciones",  href: "/app/vacations",  icon: "payroll", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS","MANAGER_RESTAURANT","MANAGER_HOTEL","MANAGER_RANCH","ACCOUNTING","INVENTORY","MANAGER"] },
+    ],
   },
+
+  // ── Administración ───────────────────────────────────────────────────────
   {
-    label: "Checador",
-    href: "/app/reloj",
-    icon: "Clock",
-    roles: ALL,
-  },
-  {
-    label: "Vacaciones",
-    href: "/app/vacations",
-    icon: "Palmtree",
-    roles: ALL,
-  },
-  {
-    label: "Administración",
-    href: "/app/owner",
-    icon: "Settings2",
+    title: "Administración",
+    icon: "settings",
     roles: ["MASTER_ADMIN","OWNER","SUPERIOR"],
-    children: [
-      { label: "Usuarios", href: "/app/owner/users", icon: "Users2", roles: ["MASTER_ADMIN","OWNER","SUPERIOR"] },
-      { label: "Negocios", href: "/app/owner/businesses", icon: "Building2", roles: ["MASTER_ADMIN","OWNER","SUPERIOR"] },
-      { label: "Configuración", href: "/app/settings", icon: "Settings", roles: ["MASTER_ADMIN","OWNER","SUPERIOR"] },
+    items: [
+      { label: "Usuarios",      href: "/app/owner/users",      icon: "users",    roles: ["MASTER_ADMIN","OWNER","SUPERIOR"] },
+      { label: "Negocios",      href: "/app/owner/businesses", icon: "apps",     roles: ["MASTER_ADMIN","OWNER","SUPERIOR"] },
+      { label: "Configuración", href: "/app/settings",         icon: "settings", roles: ["MASTER_ADMIN","OWNER","SUPERIOR"] },
+    ],
+  },
+
+  // ── Museos ───────────────────────────────────────────────────────────────
+  {
+    title: "Museos",
+    icon: "museum",
+    roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS"],
+    items: [
+      { label: "Casa de los Lamentos", href: "/app/museums", icon: "museum", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS"] },
+      { label: "Las Catacumbas",       href: "/app/museums", icon: "museum", roles: ["MASTER_ADMIN","OWNER","SUPERIOR","MANAGER_OPS"] },
     ],
   },
 ]
 
-// ─── Función de filtrado — la clave ──────────────────────────────────────────
+// ─── Función principal ────────────────────────────────────────────────────────
 
 /**
- * Devuelve los ítems de navegación que puede ver el rol dado.
- * IMPORTANTE: children SIEMPRE es un array (nunca undefined),
- * y si todos los children se filtran, el ítem padre también desaparece.
+ * Devuelve las secciones de navegación para un rol dado.
+ * - Filtra las secciones que el rol puede ver.
+ * - Dentro de cada sección, filtra los ítems que el rol puede ver.
+ * - Si una sección queda sin ítems visibles, se elimina.
+ * - items SIEMPRE es un array (nunca undefined) — previene el error .map().
  */
-export function getNavForRole(role: string): NavItem[] {
-  return NAV_ITEMS
-    .filter(item => item.roles.includes(role))
-    .map(item => {
-      // Si el ítem no tiene children, devolvemos sin la propiedad
-      if (!item.children) return { ...item }
-
-      // Filtramos los children que el rol puede ver
-      const visibleChildren = item.children.filter(c => c.roles.includes(role))
-
-      return {
-        ...item,
-        // SIEMPRE un array, nunca undefined — esto evita el error .map()
-        children: visibleChildren,
-      }
-    })
-    // Si un ítem tenía children pero ninguno es visible para este rol,
-    // lo dejamos igual (el ítem padre sigue siendo clickeable como link directo)
+export function getNavForRole(role: string): NavSection[] {
+  return SECTIONS
+    .filter(sec => sec.roles.includes(role))
+    .map(sec => ({
+      title: sec.title,
+      icon: sec.icon,
+      // Filtramos ítems y eliminamos la propiedad `roles` que el Sidebar no necesita
+      items: sec.items
+        .filter(item => item.roles.includes(role))
+        .map(({ roles: _roles, ...item }) => item),
+    }))
+    // Si todos los ítems de una sección se filtraron, eliminamos la sección
+    .filter(sec => sec.items.length > 0)
 }
 
 // Alias para compatibilidad con el layout existente
