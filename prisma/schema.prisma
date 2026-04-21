@@ -44,6 +44,11 @@ enum WithdrawalStatus {
   REJECTED
 }
 
+enum WithdrawalKind {
+  PETTY_CASH     // Caja chica: compras rápidas del día
+  LARGE_REQUEST  // Retiro grande: requiere aprobación de contadora
+}
+
 model Business {
   id        String   @id @default(cuid())
   name      String   @unique
@@ -83,6 +88,8 @@ model Business {
   hotelCharges      HotelCharge[]
   hotelFolios       HotelFolio[]
   hotelPayments     HotelPayment[]
+
+  scheduledShifts ScheduledShift[] @relation("BusinessScheduledShifts")
 }
 
 model Cashpoint {
@@ -94,6 +101,7 @@ model Cashpoint {
   business Business @relation(fields: [businessId], references: [id])
   shifts   Shift[]
   sales    Sale[]
+  withdrawals Withdrawal[]
 
   // ✅ Restaurante: menú por caja/local
   menuItems MenuItem[]
@@ -102,6 +110,8 @@ model Cashpoint {
   restaurantTables RestaurantTable[] @relation("CashpointRestaurantTables")
 
   @@unique([businessId, name])
+  
+  withdrawals Withdrawal[]
 }
 
 model User {
@@ -154,6 +164,9 @@ model User {
 
   // ✅ Reloj Checador (NUEVO)
   workDays          WorkDay[]
+
+  scheduledShifts        ScheduledShift[] @relation("UserScheduledShifts")
+scheduledShiftsCreated ScheduledShift[] @relation("ScheduledShiftCreatedBy")
 }
 
 model Shift {
@@ -220,6 +233,10 @@ model Expense {
 model Withdrawal {
   id          String           @id @default(cuid())
   businessId  String
+  cashpointId String?
+cashpoint   Cashpoint? @relation(fields: [cashpointId], references: [id])
+ kind        WithdrawalKind @default(PETTY_CASH)
+  
   amountCents Int
   reason      String?
   status      WithdrawalStatus @default(REQUESTED)
@@ -235,6 +252,10 @@ model Withdrawal {
   approvedBy  User?    @relation("ApprovedBy", fields: [approvedById], references: [id])
 
   @@index([businessId, createdAt])
+
+cashpointId String?
+cashpoint   Cashpoint? @relation(fields: [cashpointId], references: [id])
+kind        WithdrawalKind @default(PETTY_CASH)
 }
 
 // ==============================
@@ -887,3 +908,45 @@ model AccountingPeriod {
   @@unique([year, month]) // Evita que haya dos "Eneros 2026"
 }
 
+// ==============================
+// ✅ PROGRAMACIÓN DE TURNOS (PLANTILLA DEL DÍA)
+// ==============================
+//
+// Permite al gerente asignar quién trabaja qué día, en qué horario y en qué rol.
+// Se cruza con WorkDay (checador) para saber si el empleado programado realmente llegó.
+//
+
+enum ScheduledShiftStatus {
+  PLANNED    // Programado — aún no llega el día o el empleado no ha checado
+  CONFIRMED  // El empleado ya checó entrada ese día
+  ABSENT     // El día pasó y el empleado no checó
+  CANCELED   // El gerente canceló el turno antes de que sucediera
+}
+
+model ScheduledShift {
+  id         String   @id @default(cuid())
+  userId     String
+  businessId String
+
+  date      DateTime @db.Date   // día en que trabaja
+  startTime String?             // "07:00" — opcional (a veces el gerente solo marca asistencia)
+  endTime   String?             // "15:00"
+  role      String?             // "Cocina", "Barra", "Recepción", "Guía", etc. — texto libre
+  note      String?
+
+  status ScheduledShiftStatus @default(PLANNED)
+
+  createdById String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User     @relation("UserScheduledShifts", fields: [userId], references: [id])
+  business  Business @relation("BusinessScheduledShifts", fields: [businessId], references: [id])
+  createdBy User     @relation("ScheduledShiftCreatedBy", fields: [createdById], references: [id])
+
+  @@unique([userId, businessId, date])
+  @@index([businessId, date])
+  @@index([userId, date])
+  @@index([date])
+}
