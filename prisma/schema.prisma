@@ -83,6 +83,13 @@ model Business {
   scheduledShifts ScheduledShift[] @relation("BusinessScheduledShifts")
 
   userAccess UserBusinessAccess[]
+    // ✅ Hotel al que este negocio sirve alimentos (Bodega 4 → Camino de Piedra)
+  // Si el restaurante está dentro de su propio hotel, apunta a sí mismo.
+  linkedHotelBusinessId String?
+  linkedHotel           Business?  @relation("BusinessLinkedHotel", fields: [linkedHotelBusinessId], references: [id])
+  linkedByRestaurants   Business[] @relation("BusinessLinkedHotel")
+
+  @@index([linkedHotelBusinessId])
 }
 
 model Cashpoint {
@@ -722,6 +729,11 @@ model HotelReservation {
   depositCents Int @default(0)
 
   notes String?
+
+    // ✅ Servicio de alimentos (planeación de cocina por Judith)
+  hasFoodService   Boolean @default(false)
+  foodServicePax   Int?
+  foodServiceNotes String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
