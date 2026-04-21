@@ -11,8 +11,8 @@ export type TodayShiftRow = {
   endTime: string | null;
   note: string | null;
   status: ScheduledShiftStatus;
-  hasClockedIn: boolean;      // ya hay WorkDay abierto hoy
-  totalMinutesToday: number;   // minutos trabajados hoy según checador
+  hasClockedIn: boolean;
+  totalMinutesToday: number;
 };
 
 /** Devuelve YYYY-MM-DD en la zona local del servidor. */
@@ -54,7 +54,6 @@ export async function getShiftsForDay(
 
   if (shifts.length === 0) return [];
 
-  // Traer los WorkDay del mismo día para esos usuarios
   const userIds = shifts.map((s) => s.userId);
   const workDays = await prisma.workDay.findMany({
     where: { userId: { in: userIds }, date: day },
@@ -103,10 +102,11 @@ export async function getShiftsForWeek(businessId: string, weekStartIso: string)
 
 /**
  * Empleados candidatos para programar: activos, ligados al negocio
- * (sea por businessId primario, primaryBusinessId, o ya con shifts en ese negocio).
+ * (por businessId primario, primaryBusinessId, o vía UserBusinessAccess).
  */
 export async function getCandidateUsersForBusiness(businessId: string) {
-  return prisma.user.findMany({
+  // Primero los que tienen businessId o primaryBusinessId directamente
+  const direct = await prisma.user.findMany({
     where: {
       isActive: true,
       OR: [
@@ -123,12 +123,44 @@ export async function getCandidateUsersForBusiness(businessId: string) {
     },
     orderBy: { fullName: "asc" },
   });
+
+  // Después los que tienen acceso multi-negocio
+  const multiAccess = await prisma.user.findMany({
+    where: {
+      isActive: true,
+      businessAccess: { some: { businessId } },
+      NOT: {
+        OR: [
+          { businessId },
+          { primaryBusinessId: businessId },
+        ],
+      },
+    },
+    select: {
+      id: true,
+      fullName: true,
+      username: true,
+      jobTitle: true,
+      role: true,
+    },
+    orderBy: { fullName: "asc" },
+  });
+
+  // Unir y deduplicar por si acaso
+  const seen = new Set<string>();
+  const all = [...direct, ...multiAccess].filter((u) => {
+    if (seen.has(u.id)) return false;
+    seen.add(u.id);
+    return true;
+  });
+
+  return all;
 }
 
 /** Devuelve el lunes de la semana actual en formato ISO (YYYY-MM-DD). */
 export function currentWeekMondayIso(from: Date = new Date()): string {
   const d = new Date(from);
-  const dayOfWeek = d.getDay(); // 0=dom, 1=lun, ... 6=sab
+  const dayOfWeek = d.getDay();
   const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
   d.setDate(d.getDate() + diffToMonday);
   return isoDate(d);
@@ -139,7 +171,6 @@ export async function reconcilePastShifts(businessId: string) {
   const todayIso = isoDate();
   const today = dateOnly(todayIso);
 
-  // Pasados + PLANNED
   const stale = await prisma.scheduledShift.findMany({
     where: {
       businessId,
@@ -151,7 +182,6 @@ export async function reconcilePastShifts(businessId: string) {
 
   if (stale.length === 0) return { reconciled: 0 };
 
-  // Buscar si checó cada uno
   const workDays = await prisma.workDay.findMany({
     where: {
       userId: { in: stale.map((s) => s.userId) },

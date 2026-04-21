@@ -45,8 +45,8 @@ enum WithdrawalStatus {
 }
 
 enum WithdrawalKind {
-  PETTY_CASH     // Caja chica: compras rápidas del día
-  LARGE_REQUEST  // Retiro grande: requiere aprobación de contadora
+  PETTY_CASH
+  LARGE_REQUEST
 }
 
 model Business {
@@ -65,23 +65,14 @@ model Business {
 
   tasks Task[]
 
-  // ==============================
-  // ✅ Restaurante
-  // ==============================
   restaurantTables RestaurantTable[] @relation("BusinessRestaurantTables")
   menuItems        MenuItem[]        @relation("BusinessMenuItems")
   restaurantOrders RestaurantOrder[] @relation("BusinessRestaurantOrders")
 
-  // ==============================
-  // ✅ Almacén / Requisiciones
-  // ==============================
   inventoryItems InventoryItem[]
   inventoryMoves InventoryMovement[]
   requisitions   Requisition[]
 
-  // ==============================
-  // ✅ Hotel / PMS
-  // ==============================
   hotelRoomTypes    HotelRoomType[]
   hotelRooms        HotelRoom[]
   hotelReservations HotelReservation[]
@@ -89,10 +80,9 @@ model Business {
   hotelFolios       HotelFolio[]
   hotelPayments     HotelPayment[]
 
-  // ==============================
-  // ✅ Programación de turnos
-  // ==============================
   scheduledShifts ScheduledShift[] @relation("BusinessScheduledShifts")
+
+  userAccess UserBusinessAccess[]
 }
 
 model Cashpoint {
@@ -105,13 +95,10 @@ model Cashpoint {
   shifts   Shift[]
   sales    Sale[]
 
-  // ✅ Restaurante: menú por caja/local
   menuItems MenuItem[]
 
-  // ✅ Restaurante: mesas por caja/local
   restaurantTables RestaurantTable[] @relation("CashpointRestaurantTables")
 
-  // ✅ Retiros desde esta caja
   withdrawals Withdrawal[]
 
   @@unique([businessId, name])
@@ -128,7 +115,11 @@ model User {
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
 
-  // ✅ PIN POS (login rápido tipo SoftRestaurant)
+  // ✅ RRHH
+  jobTitle   String?
+  department String?
+  hireDate   DateTime? @db.Date
+
   pinHash      String?
   pinUpdatedAt DateTime?
 
@@ -150,27 +141,36 @@ model User {
   taskComments    TaskComment[]
   taskAttachments TaskAttachment[]
 
-  // ✅ Restaurante
   restaurantOrders RestaurantOrder[] @relation("UserRestaurantOrders")
 
-  // ✅ Almacén
   inventoryMovesCreated InventoryMovement[] @relation("InventoryMoveCreatedBy")
   reqCreated            Requisition[]       @relation("ReqCreatedBy")
   reqApproved           Requisition[]       @relation("ReqApprovedBy")
 
-  // ==============================
-  // ✅ Hotel / PMS
-  // ==============================
   hotelReservations HotelReservation[] @relation("UserHotelReservations")
   hotelFolios       HotelFolio[]
   hotelPayments     HotelPayment[]
 
-  // ✅ Reloj Checador
   workDays WorkDay[]
 
-  // ✅ Programación de turnos
   scheduledShifts        ScheduledShift[] @relation("UserScheduledShifts")
   scheduledShiftsCreated ScheduledShift[] @relation("ScheduledShiftCreatedBy")
+
+  businessAccess UserBusinessAccess[]
+}
+
+model UserBusinessAccess {
+  id         String   @id @default(cuid())
+  userId     String
+  businessId String
+  createdAt  DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, businessId])
+  @@index([userId])
+  @@index([businessId])
 }
 
 model Shift {
@@ -241,11 +241,9 @@ model Withdrawal {
   reason      String?
   status      WithdrawalStatus @default(REQUESTED)
 
-  // ✅ Nuevo: caja de la que se retira
   cashpointId String?
   cashpoint   Cashpoint? @relation(fields: [cashpointId], references: [id])
 
-  // ✅ Nuevo: tipo de retiro
   kind WithdrawalKind @default(PETTY_CASH)
 
   requestedById String
@@ -262,10 +260,6 @@ model Withdrawal {
   @@index([cashpointId, createdAt])
   @@index([kind, status])
 }
-
-// ==============================
-// ✅ Kanban / Tasks
-// ==============================
 
 enum TaskType {
   ACTIVITY
@@ -355,10 +349,6 @@ model TaskAttachment {
 
   @@index([taskId, createdAt])
 }
-
-// ==============================
-// ✅ Restaurante / POS / KDS
-// ==============================
 
 enum OrderStatus {
   OPEN
@@ -465,10 +455,6 @@ model RestaurantOrderItem {
   @@index([orderId, createdAt])
   @@index([kitchenStatus, createdAt])
 }
-
-// ==============================
-// ✅ Almacén / Inventario / Requisiciones
-// ==============================
 
 enum StockUnit {
   PIECE
@@ -583,10 +569,6 @@ model RequisitionItem {
   @@index([itemId])
 }
 
-// ==============================
-// ✅ Ajustes Generales (Plataforma)
-// ==============================
-
 enum CatalogType {
   EXPENSE_CATEGORY
   SALE_CONCEPT
@@ -629,10 +611,6 @@ model AuditLog {
 
   @@index([createdAt])
 }
-
-// ==============================
-// ✅ HOTEL / PMS
-// ==============================
 
 enum RoomStatus {
   AVAILABLE
@@ -833,10 +811,6 @@ model HotelPayment {
   @@index([businessId, createdAt])
 }
 
-// ==============================
-// ✅ MÓDULO DE ASISTENCIAS (RELOJ CHECADOR)
-// ==============================
-
 model WorkDay {
   id           String        @id @default(cuid())
   userId       String
@@ -883,10 +857,6 @@ enum PunchType {
   SALIDA
 }
 
-// ==============================
-// ✅ CONTABILIDAD Y CIERRES
-// ==============================
-
 model AccountingPeriod {
   id          String    @id @default(cuid())
   month       Int
@@ -902,15 +872,11 @@ model AccountingPeriod {
   @@unique([year, month])
 }
 
-// ==============================
-// ✅ PROGRAMACIÓN DE TURNOS (PLANTILLA DEL DÍA)
-// ==============================
-
 enum ScheduledShiftStatus {
-  PLANNED    // Programado — aún no llega el día o el empleado no ha checado
-  CONFIRMED  // El empleado ya checó entrada ese día
-  ABSENT     // El día pasó y el empleado no checó
-  CANCELED   // El gerente canceló el turno antes de que sucediera
+  PLANNED
+  CONFIRMED
+  ABSENT
+  CANCELED
 }
 
 model ScheduledShift {
