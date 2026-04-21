@@ -89,6 +89,9 @@ model Business {
   hotelFolios       HotelFolio[]
   hotelPayments     HotelPayment[]
 
+  // ==============================
+  // ✅ Programación de turnos
+  // ==============================
   scheduledShifts ScheduledShift[] @relation("BusinessScheduledShifts")
 }
 
@@ -101,24 +104,24 @@ model Cashpoint {
   business Business @relation(fields: [businessId], references: [id])
   shifts   Shift[]
   sales    Sale[]
-  withdrawals Withdrawal[]
 
   // ✅ Restaurante: menú por caja/local
   menuItems MenuItem[]
 
-  // ✅ Restaurante: mesas por caja/local (FALTABA ESTE INVERSO)
+  // ✅ Restaurante: mesas por caja/local
   restaurantTables RestaurantTable[] @relation("CashpointRestaurantTables")
 
-  @@unique([businessId, name])
-  
+  // ✅ Retiros desde esta caja
   withdrawals Withdrawal[]
+
+  @@unique([businessId, name])
 }
 
 model User {
   id           String   @id @default(cuid())
   fullName     String   @unique
   username     String   @unique
-  email        String?  @unique // ✅ CAMPO AÑADIDO PARA LOGIN CON GOOGLE
+  email        String?  @unique
   passwordHash String
   role         Role
   requiresClockIn Boolean @default(false)
@@ -126,7 +129,7 @@ model User {
   createdAt    DateTime @default(now())
 
   // ✅ PIN POS (login rápido tipo SoftRestaurant)
-  pinHash      String? // bcrypt hash
+  pinHash      String?
   pinUpdatedAt DateTime?
 
   businessId String?
@@ -162,11 +165,12 @@ model User {
   hotelFolios       HotelFolio[]
   hotelPayments     HotelPayment[]
 
-  // ✅ Reloj Checador (NUEVO)
-  workDays          WorkDay[]
+  // ✅ Reloj Checador
+  workDays WorkDay[]
 
+  // ✅ Programación de turnos
   scheduledShifts        ScheduledShift[] @relation("UserScheduledShifts")
-scheduledShiftsCreated ScheduledShift[] @relation("ScheduledShiftCreatedBy")
+  scheduledShiftsCreated ScheduledShift[] @relation("ScheduledShiftCreatedBy")
 }
 
 model Shift {
@@ -233,13 +237,16 @@ model Expense {
 model Withdrawal {
   id          String           @id @default(cuid())
   businessId  String
-  cashpointId String?
-cashpoint   Cashpoint? @relation(fields: [cashpointId], references: [id])
- kind        WithdrawalKind @default(PETTY_CASH)
-  
   amountCents Int
   reason      String?
   status      WithdrawalStatus @default(REQUESTED)
+
+  // ✅ Nuevo: caja de la que se retira
+  cashpointId String?
+  cashpoint   Cashpoint? @relation(fields: [cashpointId], references: [id])
+
+  // ✅ Nuevo: tipo de retiro
+  kind WithdrawalKind @default(PETTY_CASH)
 
   requestedById String
   approvedById  String?
@@ -252,10 +259,8 @@ cashpoint   Cashpoint? @relation(fields: [cashpointId], references: [id])
   approvedBy  User?    @relation("ApprovedBy", fields: [approvedById], references: [id])
 
   @@index([businessId, createdAt])
-
-cashpointId String?
-cashpoint   Cashpoint? @relation(fields: [cashpointId], references: [id])
-kind        WithdrawalKind @default(PETTY_CASH)
+  @@index([cashpointId, createdAt])
+  @@index([kind, status])
 }
 
 // ==============================
@@ -378,11 +383,9 @@ model RestaurantTable {
   capacity   Int     @default(4)
   isActive   Boolean @default(true)
 
-  // ✅ (opcional) mesa ligada a una caja/punto (útil en Rancho: cantina vs restaurante)
   cashpointId String?
   cashpoint   Cashpoint? @relation("CashpointRestaurantTables", fields: [cashpointId], references: [id])
 
-  // ✅ mapa de mesas (para UI tipo Soft)
   area      String?
   posX      Int?
   posY      Int?
@@ -404,8 +407,6 @@ model MenuItem {
   id         String @id @default(cuid())
   businessId String
 
-  // ✅ si viene null: item compartido del negocio
-  // ✅ si viene con id: item exclusivo de esa caja/local
   cashpointId String?
   cashpoint   Cashpoint? @relation(fields: [cashpointId], references: [id])
 
@@ -504,9 +505,9 @@ model InventoryItem {
 
   minQty    Int @default(0)
   onHandQty Int @default(0)
-  
-  lastPriceCents Int     @default(0) 
-  supplierName   String? 
+
+  lastPriceCents Int     @default(0)
+  supplierName   String?
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -569,7 +570,7 @@ model RequisitionItem {
   qtyRequested Int
   qtyApproved  Int?
   qtyReceived  Int?
-  
+
   estimatedPriceCents Int @default(0)
 
   note      String?
@@ -597,7 +598,7 @@ enum CatalogType {
 model PlatformSetting {
   id        String   @id @default(cuid())
   key       String   @unique
-  value     String // guardamos JSON string o texto plano
+  value     String
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
 }
@@ -615,13 +616,12 @@ model CatalogItem {
   @@index([type, isActive])
 }
 
-// (Opcional recomendado) Auditoría de cambios
 model AuditLog {
   id        String   @id @default(cuid())
   actorId   String?
   actorName String?
-  action    String // "SET_SETTING", "ADD_CATALOG", etc
-  target    String // "PlatformSetting", "CatalogItem", etc
+  action    String
+  target    String
   targetId  String?
   before    String?
   after     String?
@@ -685,13 +685,11 @@ model HotelRoom {
   businessId String
   roomTypeId String
 
-  // Ej: "101", "201", "Contenedor 1"
   name     String
   floor    String?
   status   RoomStatus @default(AVAILABLE)
   isActive Boolean    @default(true)
 
-  // Mapa visual (opcional)
   area      String?
   posX      Int?
   posY      Int?
@@ -728,31 +726,29 @@ model HotelGuest {
 }
 
 model HotelReservation {
-  id         String   @id @default(cuid())
+  id         String @id @default(cuid())
   businessId String
   roomId     String
   guestId    String
   userId     String
 
-  checkIn    DateTime
-  checkOut   DateTime
+  checkIn  DateTime
+  checkOut DateTime
 
-  status     ReservationStatus @default(CONFIRMED)
+  status ReservationStatus @default(CONFIRMED)
 
-  adults     Int @default(1)
-  children   Int @default(0)
+  adults   Int @default(1)
+  children Int @default(0)
 
-  // ✅ IMPORTANTE: estos dos campos NO existían en tu DB y por eso tronaba
   totalCents   Int @default(0)
   depositCents Int @default(0)
 
-  // ✅ en tu error Prisma sugiere que el campo se llama "notes"
-  notes      String?
+  notes String?
 
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  business Business @relation(fields: [businessId], references: [id])
+  business Business   @relation(fields: [businessId], references: [id])
   room     HotelRoom  @relation(fields: [roomId], references: [id])
   guest    HotelGuest @relation(fields: [guestId], references: [id])
   user     User       @relation("UserHotelReservations", fields: [userId], references: [id])
@@ -796,7 +792,6 @@ model HotelFolio {
   businessId    String
   reservationId String @unique
 
-  // resumen (snapshot) — se puede recalcular
   totalChargesCents  Int @default(0)
   totalPaymentsCents Int @default(0)
   depositCents       Int @default(0)
@@ -809,7 +804,6 @@ model HotelFolio {
   updatedAt DateTime @updatedAt
 
   business    Business         @relation(fields: [businessId], references: [id])
-  // ✅ FIX: antes decía Reservation, debe ser HotelReservation
   reservation HotelReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
 
   closedBy User? @relation(fields: [closedById], references: [id])
@@ -849,30 +843,29 @@ model WorkDay {
   user         User          @relation(fields: [userId], references: [id])
   date         DateTime      @db.Date
   status       WorkDayStatus @default(OPEN)
-  totalMinutes Int           @default(0) 
+  totalMinutes Int           @default(0)
 
-  punches      TimePunch[]
-  
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  punches TimePunch[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model TimePunch {
-  id         String    @id @default(cuid())
-  workDayId  String
-  // 👇 SOLO LE AGREGAMOS LA INSTRUCCIÓN AL FINAL DE ESTA LÍNEA 👇
-  workDay    WorkDay   @relation(fields: [workDayId], references: [id], onDelete: Cascade)
-  
-  type       PunchType 
-  timestamp  DateTime  @default(now())
-  
-  photoUrl   String?   
-  gpsLat     Float?    
-  gpsLng     Float?    
-  deviceType String    // "KIOSK" (Tablet sucursal) o "MOBILE" (Celular personal)
-  
-  note       String?   
-  isAdjusted Boolean   @default(false) 
+  id        String  @id @default(cuid())
+  workDayId String
+  workDay   WorkDay @relation(fields: [workDayId], references: [id], onDelete: Cascade)
+
+  type      PunchType
+  timestamp DateTime  @default(now())
+
+  photoUrl   String?
+  gpsLat     Float?
+  gpsLng     Float?
+  deviceType String
+
+  note       String?
+  isAdjusted Boolean @default(false)
 }
 
 enum WorkDayStatus {
@@ -893,28 +886,25 @@ enum PunchType {
 // ==============================
 // ✅ CONTABILIDAD Y CIERRES
 // ==============================
+
 model AccountingPeriod {
   id          String    @id @default(cuid())
-  month       Int       // 1 = Enero, 12 = Diciembre
-  year        Int       // Ej. 2026
-  
+  month       Int
+  year        Int
+
   isClosed    Boolean   @default(false)
   closedAt    DateTime?
-  closedByRef String?   // Nombre del usuario que lo cerró
+  closedByRef String?
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@unique([year, month]) // Evita que haya dos "Eneros 2026"
+  @@unique([year, month])
 }
 
 // ==============================
 // ✅ PROGRAMACIÓN DE TURNOS (PLANTILLA DEL DÍA)
 // ==============================
-//
-// Permite al gerente asignar quién trabaja qué día, en qué horario y en qué rol.
-// Se cruza con WorkDay (checador) para saber si el empleado programado realmente llegó.
-//
 
 enum ScheduledShiftStatus {
   PLANNED    // Programado — aún no llega el día o el empleado no ha checado
@@ -928,10 +918,10 @@ model ScheduledShift {
   userId     String
   businessId String
 
-  date      DateTime @db.Date   // día en que trabaja
-  startTime String?             // "07:00" — opcional (a veces el gerente solo marca asistencia)
-  endTime   String?             // "15:00"
-  role      String?             // "Cocina", "Barra", "Recepción", "Guía", etc. — texto libre
+  date      DateTime @db.Date
+  startTime String?
+  endTime   String?
+  role      String?
   note      String?
 
   status ScheduledShiftStatus @default(PLANNED)
