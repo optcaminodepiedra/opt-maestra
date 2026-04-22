@@ -62,6 +62,8 @@ model Business {
 
   users        User[] @relation("UserBusiness")
   primaryUsers User[] @relation("PrimaryBusiness")
+  
+  vacationRequests VacationRequest[]
 
   tasks Task[]
 
@@ -159,6 +161,9 @@ model User {
   hotelPayments     HotelPayment[]
 
   workDays WorkDay[]
+vacationRequests        VacationRequest[] @relation("UserVacationRequests")
+vacationRequestsDecided VacationRequest[] @relation("VacationRequestDecidedBy")
+vacationBalances        VacationBalance[]
 
   scheduledShifts        ScheduledShift[] @relation("UserScheduledShifts")
   scheduledShiftsCreated ScheduledShift[] @relation("ScheduledShiftCreatedBy")
@@ -917,4 +922,64 @@ model ScheduledShift {
   @@index([businessId, date])
   @@index([userId, date])
   @@index([date])
+}
+
+enum VacationType {
+  VACATION
+  UNPAID_LEAVE
+  SICK_LEAVE
+  PERSONAL
+}
+
+enum VacationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELED
+}
+
+model VacationRequest {
+  id         String @id @default(cuid())
+  userId     String
+  businessId String?
+
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  totalDays Int
+
+  type   VacationType   @default(VACATION)
+  status VacationStatus @default(PENDING)
+  note   String?
+
+  decidedById  String?
+  decidedAt    DateTime?
+  decisionNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User      @relation("UserVacationRequests", fields: [userId], references: [id], onDelete: Cascade)
+  business  Business? @relation(fields: [businessId], references: [id])
+  decidedBy User?     @relation("VacationRequestDecidedBy", fields: [decidedById], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@index([startDate])
+}
+
+model VacationBalance {
+  id          String @id @default(cuid())
+  userId      String
+  year        Int
+  earnedDays  Int @default(12)
+  usedDays    Int @default(0)
+  pendingDays Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, year])
+  @@index([userId])
 }
