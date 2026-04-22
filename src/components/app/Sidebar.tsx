@@ -33,7 +33,10 @@ import {
   BadgeDollarSign,
   RadioTower,
   AppWindow,
-  Clock
+  Clock,
+  Database,
+  History,
+  CircleDot,
 } from "lucide-react";
 
 const iconMap: Record<IconName, any> = {
@@ -63,7 +66,19 @@ const iconMap: Record<IconName, any> = {
   inventory: Boxes,
   payroll: BadgeDollarSign,
   iot: RadioTower,
+
+  // Nuevos íconos Fase 5
+  database: Database,
+  history: History,
 };
+
+// Fallback seguro: si un ícono no está registrado, usamos CircleDot
+// en vez de crashear la app con undefined.
+function resolveIcon(name: string | undefined) {
+  if (!name) return CircleDot;
+  const Icon = (iconMap as Record<string, any>)[name];
+  return Icon ?? CircleDot;
+}
 
 function ItemRow({
   it,
@@ -75,7 +90,7 @@ function ItemRow({
   onNavigate?: () => void;
 }) {
   const active = pathname === it.href || pathname.startsWith(it.href + "/");
-  const Icon = iconMap[it.icon];
+  const Icon = resolveIcon(it.icon);
 
   return (
     <Link
@@ -125,7 +140,7 @@ export function Sidebar({
       <ScrollArea className="h-[calc(100vh-64px)] px-2 pb-4">
         <Accordion type="multiple" defaultValue={sections.map((s) => s.title)}>
           {sections.map((sec) => {
-            const SecIcon = sec.icon ? iconMap[sec.icon] : null;
+            const SecIcon = sec.icon ? resolveIcon(sec.icon) : null;
 
             return (
               <AccordionItem
