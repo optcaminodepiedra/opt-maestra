@@ -91,6 +91,8 @@ model Business {
   linkedHotel           Business?  @relation("BusinessLinkedHotel", fields: [linkedHotelBusinessId], references: [id])
   linkedByRestaurants   Business[] @relation("BusinessLinkedHotel")
 
+  importBatches ImportBatch[]
+
   @@index([linkedHotelBusinessId])
 }
 
@@ -169,6 +171,12 @@ vacationBalances        VacationBalance[]
   scheduledShiftsCreated ScheduledShift[] @relation("ScheduledShiftCreatedBy")
 
   businessAccess UserBusinessAccess[]
+
+  importBatchId        String?
+importBatch          ImportBatch?  @relation("UserImportBatch", fields: [importBatchId], references: [id])
+importBatchesCreated ImportBatch[] @relation("ImportBatchCreatedBy")
+importBatchesReverted ImportBatch[] @relation("ImportBatchRevertedBy")
+
 }
 
 model UserBusinessAccess {
@@ -227,6 +235,9 @@ model Sale {
   shift     Shift?    @relation(fields: [shiftId], references: [id])
   user      User      @relation(fields: [userId], references: [id])
 
+importBatchId String?
+importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
+
   @@index([businessId, createdAt])
 }
 
@@ -242,6 +253,8 @@ model Expense {
 
   business Business @relation(fields: [businessId], references: [id])
   user     User     @relation(fields: [userId], references: [id])
+importBatchId String?
+importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
 
   @@index([businessId, createdAt])
 }
@@ -267,6 +280,9 @@ model Withdrawal {
   business    Business @relation(fields: [businessId], references: [id])
   requestedBy User     @relation("RequestedBy", fields: [requestedById], references: [id])
   approvedBy  User?    @relation("ApprovedBy", fields: [approvedById], references: [id])
+
+importBatchId String?
+importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
 
   @@index([businessId, createdAt])
   @@index([cashpointId, createdAt])
@@ -515,6 +531,9 @@ model InventoryItem {
   movements InventoryMovement[]
   reqItems  RequisitionItem[]
 
+  importBatchId String?
+importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
+
   @@index([businessId, isActive])
   @@index([businessId, name])
 }
@@ -751,6 +770,9 @@ model HotelReservation {
   charges HotelCharge[]
   folio   HotelFolio?
 
+  importBatchId String?
+importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
+
   @@index([businessId, status])
   @@index([roomId, status])
   @@index([guestId])
@@ -982,4 +1004,57 @@ model VacationBalance {
 
   @@unique([userId, year])
   @@index([userId])
+}
+
+enum ImportEntityType {
+  SALES
+  EXPENSES
+  WITHDRAWALS
+  HOTEL_RESERVATIONS
+  GUESTS
+  INVENTORY_ITEMS
+  EMPLOYEES
+}
+
+enum ImportBatchStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+  REVERTED
+}
+
+model ImportBatch {
+  id          String             @id @default(cuid())
+  entityType  ImportEntityType
+  businessId  String?
+  filename    String
+  totalRows   Int                @default(0)
+  successRows Int                @default(0)
+  errorRows   Int                @default(0)
+  errors      Json?
+  status      ImportBatchStatus  @default(PROCESSING)
+  note        String?
+
+  createdById  String
+  createdAt    DateTime   @default(now())
+  completedAt  DateTime?
+  revertedAt   DateTime?
+  revertedById String?
+
+  createdBy  User      @relation("ImportBatchCreatedBy", fields: [createdById], references: [id])
+  revertedBy User?     @relation("ImportBatchRevertedBy", fields: [revertedById], references: [id])
+  business   Business? @relation(fields: [businessId], references: [id])
+
+  sales             Sale[]
+  expenses          Expense[]
+  withdrawals       Withdrawal[]
+  hotelReservations HotelReservation[]
+  inventoryItems    InventoryItem[]
+  users             User[]             @relation("UserImportBatch")
+  // guests         Guest[]  // descomenta si tu schema tiene Guest
+
+  @@index([entityType])
+  @@index([businessId])
+  @@index([createdAt])
+  @@index([status])
 }

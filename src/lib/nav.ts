@@ -3,7 +3,7 @@ export type IconName =
   | "reports" | "users" | "settings" | "tasks" | "kanban"
   | "apps" | "reloj" | "restaurant" | "pos" | "kds" | "tables"
   | "menu" | "hotel" | "museum" | "adventure" | "inventory"
-  | "payroll" | "iot";
+  | "payroll" | "iot" | "database" | "history";
 
 export type NavItem = {
   label: string;
@@ -36,7 +36,6 @@ const ALL = [
 const DIRECTION = ["MASTER_ADMIN","OWNER","SUPERIOR"];
 
 const SECTIONS: RoledSection[] = [
-  // ───────────────── General ─────────────────
   {
     title: "General",
     icon: "apps",
@@ -54,13 +53,13 @@ const SECTIONS: RoledSection[] = [
     icon: "dashboard",
     roles: ["MANAGER_OPS", ...DIRECTION],
     items: [
-      { label: "Dashboard",        href: "/app/manager/ops",              icon: "dashboard",   roles: ["MANAGER_OPS", ...DIRECTION] },
-      { label: "Finanzas",         href: "/app/manager/ops/finances",     icon: "finance",     roles: ["MANAGER_OPS", ...DIRECTION] },
-      { label: "Reportes",         href: "/app/manager/ops/reports",      icon: "reports",     roles: ["MANAGER_OPS", ...DIRECTION] },
-      { label: "Inventario",       href: "/app/manager/ops/inventory",    icon: "inventory",   roles: ["MANAGER_OPS", ...DIRECTION] },
-      { label: "Requisiciones",    href: "/app/manager/ops/requisitions", icon: "kanban",      roles: ["MANAGER_OPS", ...DIRECTION] },
-      { label: "Equipo (asistencias)", href: "/app/manager/ops/payroll",  icon: "payroll",     roles: ["MANAGER_OPS", ...DIRECTION] },
-      { label: "Plantilla / Horarios", href: "/app/manager/ops/schedule", icon: "payroll",     roles: ["MANAGER_OPS", ...DIRECTION] },
+      { label: "Dashboard",            href: "/app/manager/ops",              icon: "dashboard", roles: ["MANAGER_OPS", ...DIRECTION] },
+      { label: "Finanzas",             href: "/app/manager/ops/finances",     icon: "finance",   roles: ["MANAGER_OPS", ...DIRECTION] },
+      { label: "Reportes",             href: "/app/manager/ops/reports",      icon: "reports",   roles: ["MANAGER_OPS", ...DIRECTION] },
+      { label: "Inventario",           href: "/app/manager/ops/inventory",    icon: "inventory", roles: ["MANAGER_OPS", ...DIRECTION] },
+      { label: "Requisiciones",        href: "/app/manager/ops/requisitions", icon: "kanban",    roles: ["MANAGER_OPS", ...DIRECTION] },
+      { label: "Equipo (asistencias)", href: "/app/manager/ops/payroll",      icon: "payroll",   roles: ["MANAGER_OPS", ...DIRECTION] },
+      { label: "Plantilla / Horarios", href: "/app/manager/ops/schedule",     icon: "payroll",   roles: ["MANAGER_OPS", ...DIRECTION] },
     ],
   },
 
@@ -70,13 +69,13 @@ const SECTIONS: RoledSection[] = [
     icon: "dashboard",
     roles: ["MANAGER_RESTAURANT"],
     items: [
-      { label: "Dashboard",        href: "/app/manager/restaurant",              icon: "dashboard", roles: ["MANAGER_RESTAURANT"] },
-      { label: "Finanzas",         href: "/app/manager/restaurant/finances",     icon: "finance",   roles: ["MANAGER_RESTAURANT"] },
-      { label: "Reportes",         href: "/app/manager/restaurant/reports",      icon: "reports",   roles: ["MANAGER_RESTAURANT"] },
-      { label: "Inventario",       href: "/app/manager/restaurant/inventory",    icon: "inventory", roles: ["MANAGER_RESTAURANT"] },
-      { label: "Requisiciones",    href: "/app/manager/restaurant/requisitions", icon: "kanban",    roles: ["MANAGER_RESTAURANT"] },
-      { label: "Equipo (asistencias)", href: "/app/manager/restaurant/payroll",  icon: "payroll",   roles: ["MANAGER_RESTAURANT"] },
-      { label: "Plantilla / Horarios", href: "/app/manager/restaurant/schedule", icon: "payroll",   roles: ["MANAGER_RESTAURANT"] },
+      { label: "Dashboard",            href: "/app/manager/restaurant",              icon: "dashboard", roles: ["MANAGER_RESTAURANT"] },
+      { label: "Finanzas",             href: "/app/manager/restaurant/finances",     icon: "finance",   roles: ["MANAGER_RESTAURANT"] },
+      { label: "Reportes",             href: "/app/manager/restaurant/reports",      icon: "reports",   roles: ["MANAGER_RESTAURANT"] },
+      { label: "Inventario",           href: "/app/manager/restaurant/inventory",    icon: "inventory", roles: ["MANAGER_RESTAURANT"] },
+      { label: "Requisiciones",        href: "/app/manager/restaurant/requisitions", icon: "kanban",    roles: ["MANAGER_RESTAURANT"] },
+      { label: "Equipo (asistencias)", href: "/app/manager/restaurant/payroll",      icon: "payroll",   roles: ["MANAGER_RESTAURANT"] },
+      { label: "Plantilla / Horarios", href: "/app/manager/restaurant/schedule",     icon: "payroll",   roles: ["MANAGER_RESTAURANT"] },
     ],
   },
 
@@ -86,18 +85,18 @@ const SECTIONS: RoledSection[] = [
     icon: "dashboard",
     roles: ["MANAGER_RANCH"],
     items: [
-      { label: "Dashboard",        href: "/app/manager/ranch",              icon: "dashboard", roles: ["MANAGER_RANCH"] },
-      { label: "Finanzas",         href: "/app/manager/ranch/finances",     icon: "finance",   roles: ["MANAGER_RANCH"] },
-      { label: "Reportes",         href: "/app/manager/ranch/reports",      icon: "reports",   roles: ["MANAGER_RANCH"] },
-      { label: "Inventario",       href: "/app/manager/ranch/inventory",    icon: "inventory", roles: ["MANAGER_RANCH"] },
-      { label: "Requisiciones",    href: "/app/manager/ranch/requisitions", icon: "kanban",    roles: ["MANAGER_RANCH"] },
-      { label: "Equipo (asistencias)", href: "/app/manager/ranch/payroll",  icon: "payroll",   roles: ["MANAGER_RANCH"] },
-      { label: "Plantilla / Horarios", href: "/app/manager/ranch/schedule", icon: "payroll",   roles: ["MANAGER_RANCH"] },
-      { label: "Experiencias",     href: "/app/adventure",                  icon: "adventure", roles: ["MANAGER_RANCH"] },
+      { label: "Dashboard",            href: "/app/manager/ranch",              icon: "dashboard", roles: ["MANAGER_RANCH"] },
+      { label: "Finanzas",             href: "/app/manager/ranch/finances",     icon: "finance",   roles: ["MANAGER_RANCH"] },
+      { label: "Reportes",             href: "/app/manager/ranch/reports",      icon: "reports",   roles: ["MANAGER_RANCH"] },
+      { label: "Inventario",           href: "/app/manager/ranch/inventory",    icon: "inventory", roles: ["MANAGER_RANCH"] },
+      { label: "Requisiciones",        href: "/app/manager/ranch/requisitions", icon: "kanban",    roles: ["MANAGER_RANCH"] },
+      { label: "Equipo (asistencias)", href: "/app/manager/ranch/payroll",      icon: "payroll",   roles: ["MANAGER_RANCH"] },
+      { label: "Plantilla / Horarios", href: "/app/manager/ranch/schedule",     icon: "payroll",   roles: ["MANAGER_RANCH"] },
+      { label: "Experiencias",         href: "/app/adventure",                  icon: "adventure", roles: ["MANAGER_RANCH"] },
     ],
   },
 
-  // ───────────────── Operación restaurante (staff) ─────────────────
+  // ───────────────── Staff restaurante ─────────────────
   {
     title: "Restaurante",
     icon: "restaurant",
@@ -110,7 +109,7 @@ const SECTIONS: RoledSection[] = [
     ],
   },
 
-  // ───────────────── Hotel (staff) ─────────────────
+  // ───────────────── Hotel ─────────────────
   {
     title: "Hotel",
     icon: "hotel",
@@ -123,19 +122,19 @@ const SECTIONS: RoledSection[] = [
     ],
   },
 
-  // ───────────────── Claudia — Spa / Tienda / Baños ─────────────────
+  // ───────────────── Claudia - Servicios extra ─────────────────
   {
     title: "Servicios extra",
     icon: "apps",
     roles: ["MANAGER_OPS", ...DIRECTION],
     items: [
-      { label: "Spa",                  href: "/app/spa",                   icon: "adventure", roles: ["MANAGER_OPS", ...DIRECTION] },
-      { label: "Tienda",               href: "/app/store",                 icon: "inventory", roles: ["MANAGER_OPS", ...DIRECTION, "STAFF_STORE"] },
-      { label: "Baños públicos",       href: "/app/facilities/bathrooms",  icon: "iot",       roles: ["MANAGER_OPS", ...DIRECTION] },
+      { label: "Spa",            href: "/app/spa",                  icon: "adventure", roles: ["MANAGER_OPS", ...DIRECTION] },
+      { label: "Tienda",         href: "/app/store",                icon: "inventory", roles: ["MANAGER_OPS", ...DIRECTION, "STAFF_STORE"] },
+      { label: "Baños públicos", href: "/app/facilities/bathrooms", icon: "iot",       roles: ["MANAGER_OPS", ...DIRECTION] },
     ],
   },
 
-  // ───────────────── Experiencias (staff rancho) ─────────────────
+  // ───────────────── Staff experiencias ─────────────────
   {
     title: "Experiencias",
     icon: "adventure",
@@ -145,18 +144,18 @@ const SECTIONS: RoledSection[] = [
     ],
   },
 
-  // ───────────────── Almacén (Goyo y global) ─────────────────
+  // ───────────────── Almacén global (Goyo) ─────────────────
   {
     title: "Almacén general",
     icon: "inventory",
     roles: ["INVENTORY", "ACCOUNTING", ...DIRECTION],
     items: [
-      { label: "Stock global",         href: "/app/inventory",              icon: "inventory", roles: ["INVENTORY","ACCOUNTING", ...DIRECTION] },
-      { label: "Todas las requisiciones", href: "/app/inventory/requisitions", icon: "kanban", roles: ["INVENTORY","ACCOUNTING", ...DIRECTION] },
+      { label: "Stock global",            href: "/app/inventory",              icon: "inventory", roles: ["INVENTORY","ACCOUNTING", ...DIRECTION] },
+      { label: "Todas las requisiciones", href: "/app/inventory/requisitions", icon: "kanban",    roles: ["INVENTORY","ACCOUNTING", ...DIRECTION] },
     ],
   },
 
-  // ───────────────── Finanzas globales (direccion + contabilidad) ─────────────────
+  // ───────────────── Finanzas globales ─────────────────
   {
     title: "Finanzas globales",
     icon: "finance",
@@ -169,7 +168,7 @@ const SECTIONS: RoledSection[] = [
     ],
   },
 
-  // ───────────────── RRHH global ─────────────────
+  // ───────────────── RRHH ─────────────────
   {
     title: "RRHH",
     icon: "payroll",
@@ -177,6 +176,17 @@ const SECTIONS: RoledSection[] = [
     items: [
       { label: "Asistencias (todos)", href: "/app/payroll",   icon: "payroll", roles: ["ACCOUNTING", ...DIRECTION] },
       { label: "Vacaciones",          href: "/app/vacations", icon: "payroll", roles: ["ACCOUNTING", ...DIRECTION, "MANAGER_OPS","MANAGER_RESTAURANT","MANAGER_HOTEL","MANAGER_RANCH","MANAGER"] },
+    ],
+  },
+
+  // ───────────────── Admin - Importar data (NUEVO) ─────────────────
+  {
+    title: "Importar data",
+    icon: "database",
+    roles: DIRECTION,
+    items: [
+      { label: "Nuevo import", href: "/app/admin/import",         icon: "database", roles: DIRECTION },
+      { label: "Historial",    href: "/app/admin/import/history", icon: "history",  roles: DIRECTION },
     ],
   },
 
