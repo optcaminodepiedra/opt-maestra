@@ -9,8 +9,12 @@ import { getOrCreateBalance } from "@/lib/vacations.actions";
 
 export const dynamic = "force-dynamic";
 
-const APPROVER_ROLES = ["MASTER_ADMIN", "OWNER", "SUPERIOR", "ACCOUNTING",
-                        "MANAGER_OPS", "MANAGER_RESTAURANT", "MANAGER_HOTEL", "MANAGER_RANCH", "MANAGER"];
+const APPROVER_ROLES = [
+  "MASTER_ADMIN", "OWNER", "SUPERIOR", "ACCOUNTING",
+  "MANAGER_OPS", "MANAGER_RESTAURANT", "MANAGER_HOTEL", "MANAGER_RANCH", "MANAGER",
+];
+
+const GLOBAL_APPROVERS = ["MASTER_ADMIN", "OWNER", "SUPERIOR", "ACCOUNTING"];
 
 export default async function VacationsPage() {
   const session = await getServerSession(authOptions);
@@ -20,10 +24,9 @@ export default async function VacationsPage() {
   const userId = me.id!;
   const role = me.role as string;
   const canApprove = APPROVER_ROLES.includes(role);
+  const isGlobalApprover = GLOBAL_APPROVERS.includes(role);
 
   const currentYear = new Date().getFullYear();
-
-  // Balance del año actual (se crea si no existe)
   const balance = await getOrCreateBalance(userId, currentYear);
 
   // Mis solicitudes
@@ -40,8 +43,8 @@ export default async function VacationsPage() {
   // Del equipo (solo si puede aprobar)
   let teamRequestsRaw: typeof myRequestsRaw = [];
   if (canApprove) {
-    const isGlobal = ["MASTER_ADMIN", "OWNER", "SUPERIOR", "ACCOUNTING"].includes(role);
-    if (isGlobal) {
+    if (isGlobalApprover) {
+      // MASTER_ADMIN / OWNER / SUPERIOR / ACCOUNTING ven TODAS las solicitudes de todos los usuarios (excepto las propias)
       teamRequestsRaw = await prisma.vacationRequest.findMany({
         where: { userId: { not: userId } },
         include: {
@@ -49,7 +52,7 @@ export default async function VacationsPage() {
           user: { select: { fullName: true } },
         },
         orderBy: [{ status: "asc" }, { createdAt: "desc" }],
-        take: 100,
+        take: 200,
       });
     } else {
       // Manager: solo su equipo
@@ -59,7 +62,9 @@ export default async function VacationsPage() {
         const access = await prisma.$queryRaw<{ businessId: string }[]>`
           SELECT "businessId" FROM "UserBusinessAccess" WHERE "userId" = ${userId}
         `;
-        for (const a of access) if (!businessIds.includes(a.businessId)) businessIds.push(a.businessId);
+        for (const a of access) {
+          if (!businessIds.includes(a.businessId)) businessIds.push(a.businessId);
+        }
       } catch {}
 
       if (businessIds.length > 0) {
@@ -106,14 +111,24 @@ export default async function VacationsPage() {
     createdAt: r.createdAt.toISOString(),
   });
 
+  // Contar pendientes para mostrar en el título si hay
+  const pendingCount = teamRequestsRaw.filter((r) => r.status === "PENDING").length;
+
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-6">
       <div>
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-2">
           <Calendar className="w-7 h-7 text-indigo-500" /> Vacaciones
+          {pendingCount > 0 && canApprove && (
+            <span className="text-xs font-normal bg-amber-100 text-amber-800 border border-amber-200 rounded-full px-2 py-0.5 ml-2">
+              {pendingCount} pendientes
+            </span>
+          )}
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Gestiona tus solicitudes de vacaciones, permisos e incapacidades
+          {canApprove
+            ? "Gestiona tus solicitudes y aprueba las de tu equipo"
+            : "Gestiona tus solicitudes de vacaciones, permisos e incapacidades"}
         </p>
       </div>
 
