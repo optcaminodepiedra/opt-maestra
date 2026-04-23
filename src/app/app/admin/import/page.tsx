@@ -31,7 +31,6 @@ export default async function AdminImportPage() {
   }
 
   const businesses = await prisma.business.findMany({
-    where: { isActive: true },
     select: { id: true, name: true },
     orderBy: { name: "asc" },
   });
