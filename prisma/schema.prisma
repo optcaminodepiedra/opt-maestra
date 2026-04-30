@@ -62,7 +62,7 @@ model Business {
 
   users        User[] @relation("UserBusiness")
   primaryUsers User[] @relation("PrimaryBusiness")
-  
+
   vacationRequests VacationRequest[]
 
   tasks Task[]
@@ -81,12 +81,13 @@ model Business {
   hotelCharges      HotelCharge[]
   hotelFolios       HotelFolio[]
   hotelPayments     HotelPayment[]
+  accountsPayables  AccountsPayable[]
 
   scheduledShifts ScheduledShift[] @relation("BusinessScheduledShifts")
 
   userAccess UserBusinessAccess[]
-    // ✅ Hotel al que este negocio sirve alimentos (Bodega 4 → Camino de Piedra)
-  // Si el restaurante está dentro de su propio hotel, apunta a sí mismo.
+
+  // Hotel al que este negocio sirve alimentos (Bodega 4 -> Camino de Piedra)
   linkedHotelBusinessId String?
   linkedHotel           Business?  @relation("BusinessLinkedHotel", fields: [linkedHotelBusinessId], references: [id])
   linkedByRestaurants   Business[] @relation("BusinessLinkedHotel")
@@ -126,7 +127,7 @@ model User {
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
 
-  // ✅ RRHH
+  // RRHH
   jobTitle   String?
   department String?
   hireDate   DateTime? @db.Date
@@ -163,20 +164,26 @@ model User {
   hotelPayments     HotelPayment[]
 
   workDays WorkDay[]
-vacationRequests        VacationRequest[] @relation("UserVacationRequests")
-vacationRequestsDecided VacationRequest[] @relation("VacationRequestDecidedBy")
-vacationBalances        VacationBalance[]
+
+  vacationRequests        VacationRequest[] @relation("UserVacationRequests")
+  vacationRequestsDecided VacationRequest[] @relation("VacationRequestDecidedBy")
+  vacationBalances        VacationBalance[]
 
   scheduledShifts        ScheduledShift[] @relation("UserScheduledShifts")
   scheduledShiftsCreated ScheduledShift[] @relation("ScheduledShiftCreatedBy")
 
   businessAccess UserBusinessAccess[]
 
-  importBatchId        String?
-importBatch          ImportBatch?  @relation("UserImportBatch", fields: [importBatchId], references: [id])
-importBatchesCreated ImportBatch[] @relation("ImportBatchCreatedBy")
-importBatchesReverted ImportBatch[] @relation("ImportBatchRevertedBy")
+  requisitionsDelivered  Requisition[]    @relation("RequisitionDeliveredBy")
+  requisitionsReceived   Requisition[]    @relation("RequisitionReceivedBy")
+  accountsPayableCreated AccountsPayable[] @relation("AccountsPayableCreatedBy")
+  accountsPayablePaid    AccountsPayable[] @relation("AccountsPayablePaidBy")
+  notifications          Notification[]
 
+  importBatchId         String?
+  importBatch           ImportBatch?  @relation("UserImportBatch", fields: [importBatchId], references: [id])
+  importBatchesCreated  ImportBatch[] @relation("ImportBatchCreatedBy")
+  importBatchesReverted ImportBatch[] @relation("ImportBatchRevertedBy")
 }
 
 model UserBusinessAccess {
@@ -235,8 +242,8 @@ model Sale {
   shift     Shift?    @relation(fields: [shiftId], references: [id])
   user      User      @relation(fields: [userId], references: [id])
 
-importBatchId String?
-importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
+  importBatchId String?
+  importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
 
   @@index([businessId, createdAt])
 }
@@ -253,8 +260,11 @@ model Expense {
 
   business Business @relation(fields: [businessId], references: [id])
   user     User     @relation(fields: [userId], references: [id])
-importBatchId String?
-importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
+
+  importBatchId String?
+  importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
+
+  accountsPayables AccountsPayable[] @relation("APExpense")
 
   @@index([businessId, createdAt])
 }
@@ -281,8 +291,10 @@ model Withdrawal {
   requestedBy User     @relation("RequestedBy", fields: [requestedById], references: [id])
   approvedBy  User?    @relation("ApprovedBy", fields: [approvedById], references: [id])
 
-importBatchId String?
-importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
+  importBatchId String?
+  importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
+
+  accountsPayables AccountsPayable[] @relation("APWithdrawal")
 
   @@index([businessId, createdAt])
   @@index([cashpointId, createdAt])
@@ -505,6 +517,7 @@ enum RequisitionStatus {
   APPROVED
   REJECTED
   ORDERED
+  RECEIVED_PARTIAL
   RECEIVED
   CLOSED
 }
@@ -532,7 +545,7 @@ model InventoryItem {
   reqItems  RequisitionItem[]
 
   importBatchId String?
-importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
+  importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
 
   @@index([businessId, isActive])
   @@index([businessId, name])
@@ -567,6 +580,28 @@ model Requisition {
   createdById  String
   approvedById String?
 
+  // Tipo de requisicion y configuracion
+  kind                    RequisitionKind     @default(RESTAURANT)
+  eventName               String?
+  isPrivate               Boolean             @default(false)
+  priority                RequisitionPriority @default(NORMAL)
+  urgentNote              String?
+  requiresSeparatePayment Boolean             @default(false)
+
+  // Estados de entrega
+  deliveredAt    DateTime?
+  deliveredById  String?
+  deliveredBy    User?     @relation("RequisitionDeliveredBy", fields: [deliveredById], references: [id])
+  deliveryNote   String?
+
+  receivedAt        DateTime?
+  receivedById      String?
+  receivedBy        User?     @relation("RequisitionReceivedBy", fields: [receivedById], references: [id])
+  receivedSignature String?
+
+  // Relacion con cuenta por pagar
+  accountsPayable AccountsPayable?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -577,24 +612,33 @@ model Requisition {
   items RequisitionItem[]
 
   @@index([businessId, status, createdAt])
+  @@index([kind])
+  @@index([priority])
+  @@index([isPrivate])
 }
 
 model RequisitionItem {
-  id            String @id @default(cuid())
+  id            String  @id @default(cuid())
   requisitionId String
-  itemId        String
+  itemId        String?
 
   qtyRequested Int
   qtyApproved  Int?
   qtyReceived  Int?
+
+  freeTextName       String?
+  freeTextUnit       String?
+  qtyDelivered       Int?
+  notDeliveredReason String?
+  deliveredAt        DateTime?
 
   estimatedPriceCents Int @default(0)
 
   note      String?
   createdAt DateTime @default(now())
 
-  requisition Requisition   @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  item        InventoryItem @relation(fields: [itemId], references: [id])
+  requisition Requisition    @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  item        InventoryItem? @relation(fields: [itemId], references: [id])
 
   @@index([requisitionId])
   @@index([itemId])
@@ -754,7 +798,7 @@ model HotelReservation {
 
   notes String?
 
-    // ✅ Servicio de alimentos (planeación de cocina por Judith)
+  // Servicio de alimentos (planeacion de cocina por Judith)
   hasFoodService   Boolean @default(false)
   foodServicePax   Int?
   foodServiceNotes String?
@@ -771,7 +815,7 @@ model HotelReservation {
   folio   HotelFolio?
 
   importBatchId String?
-importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
+  importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
 
   @@index([businessId, status])
   @@index([roomId, status])
@@ -961,7 +1005,7 @@ enum VacationStatus {
 }
 
 model VacationRequest {
-  id         String @id @default(cuid())
+  id         String  @id @default(cuid())
   userId     String
   businessId String?
 
@@ -1051,10 +1095,105 @@ model ImportBatch {
   hotelReservations HotelReservation[]
   inventoryItems    InventoryItem[]
   users             User[]             @relation("UserImportBatch")
-  // guests         Guest[]  // descomenta si tu schema tiene Guest
 
   @@index([entityType])
   @@index([businessId])
   @@index([createdAt])
   @@index([status])
+}
+
+enum RequisitionKind {
+  RESTAURANT
+  SPECIAL_EVENT
+  OWNER_HOUSE
+  VENDING_MACHINE
+  GENERAL
+}
+
+enum RequisitionPriority {
+  NORMAL
+  URGENT
+}
+
+enum AccountsPayableStatus {
+  PENDING
+  PAID
+  OVERDUE
+  CANCELED
+}
+
+enum NotificationType {
+  PAYMENT_DUE
+  REQUISITION_NEW
+  REQUISITION_APPROVED
+  REQUISITION_REJECTED
+  REQUISITION_DELIVERED
+  REQUISITION_PARTIAL
+  PAYMENT_OVERDUE
+  STOCK_LOW
+  GENERAL
+}
+
+model AccountsPayable {
+  id            String                @id @default(cuid())
+  businessId    String?
+  requisitionId String?               @unique
+
+  supplierName  String
+  concept       String
+  amountCents   Int
+  dueDate       DateTime?
+
+  status        AccountsPayableStatus @default(PENDING)
+  isUrgent      Boolean               @default(false)
+  note          String?
+
+  createdById   String
+  paidAt        DateTime?
+  paidById      String?
+  paymentMethod String?
+  paymentRef    String?
+
+  linkedExpenseId    String?
+  linkedExpense      Expense?    @relation("APExpense", fields: [linkedExpenseId], references: [id])
+
+  linkedWithdrawalId String?
+  linkedWithdrawal   Withdrawal? @relation("APWithdrawal", fields: [linkedWithdrawalId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business    Business?    @relation(fields: [businessId], references: [id])
+  requisition Requisition? @relation(fields: [requisitionId], references: [id])
+  createdBy   User         @relation("AccountsPayableCreatedBy", fields: [createdById], references: [id])
+  paidBy      User?        @relation("AccountsPayablePaidBy", fields: [paidById], references: [id])
+
+  @@index([status])
+  @@index([dueDate])
+  @@index([businessId])
+  @@index([requisitionId])
+  @@index([isUrgent])
+}
+
+model Notification {
+  id                String           @id @default(cuid())
+  userId            String?
+  targetRole        String?
+  type              NotificationType
+  title             String
+  message           String?
+  linkUrl           String?
+
+  relatedEntityId   String?
+  relatedEntityType String?
+
+  isRead    Boolean   @default(false)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([targetRole, isRead])
+  @@index([createdAt])
 }
