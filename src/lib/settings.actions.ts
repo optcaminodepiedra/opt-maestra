@@ -31,7 +31,7 @@ export async function getSystemStats() {
   const [users, businesses, cashpoints, sales, expenses] = await Promise.all([
     prisma.user.count({ where: { isActive: true } }),
     prisma.business.count(),
-    prisma.cashpoint.count({ where: { isActive: true } }),
+    prisma.cashpoint.count(),
     prisma.sale.count(),
     prisma.expense.count(),
   ]);
