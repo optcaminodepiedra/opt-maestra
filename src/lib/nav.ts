@@ -3,7 +3,8 @@ export type IconName =
   | "reports" | "users" | "settings" | "tasks" | "kanban"
   | "apps" | "reloj" | "restaurant" | "pos" | "kds" | "tables"
   | "menu" | "hotel" | "museum" | "adventure" | "inventory"
-  | "payroll" | "iot" | "database" | "history";
+  | "payroll" | "iot" | "database" | "history"
+  | "bell" | "creditcard";
 
 export type NavItem = {
   label: string;
@@ -41,9 +42,10 @@ const SECTIONS: RoledSection[] = [
     icon: "apps",
     roles: ALL,
     items: [
-      { label: "Dashboard", href: "/app", icon: "dashboard", roles: ALL },
-      { label: "Checador", href: "/app/reloj", icon: "reloj", roles: ALL },
-      { label: "Tareas", href: "/app/ops/kanban/activities", icon: "tasks", roles: ALL },
+      { label: "Dashboard",      href: "/app",               icon: "dashboard", roles: ALL },
+      { label: "Notificaciones", href: "/app/notifications", icon: "bell",      roles: ALL },
+      { label: "Checador",       href: "/app/reloj",         icon: "reloj",     roles: ALL },
+      { label: "Tareas",         href: "/app/ops/kanban/activities", icon: "tasks", roles: ALL },
     ],
   },
 
@@ -122,7 +124,7 @@ const SECTIONS: RoledSection[] = [
     ],
   },
 
-  // ───────────────── Claudia - Servicios extra ─────────────────
+  // ───────────────── Servicios extra (Claudia) ─────────────────
   {
     title: "Servicios extra",
     icon: "apps",
@@ -150,8 +152,9 @@ const SECTIONS: RoledSection[] = [
     icon: "inventory",
     roles: ["INVENTORY", "ACCOUNTING", ...DIRECTION],
     items: [
-      { label: "Stock global",            href: "/app/inventory",              icon: "inventory", roles: ["INVENTORY","ACCOUNTING", ...DIRECTION] },
-      { label: "Todas las requisiciones", href: "/app/inventory/requisitions", icon: "kanban",    roles: ["INVENTORY","ACCOUNTING", ...DIRECTION] },
+      { label: "Stock global",            href: "/app/inventory",                  icon: "inventory", roles: ["INVENTORY","ACCOUNTING", ...DIRECTION] },
+      { label: "Todas las requisiciones", href: "/app/inventory/requisitions",     icon: "kanban",    roles: ["INVENTORY","ACCOUNTING", ...DIRECTION] },
+      { label: "Nueva requisición",      href: "/app/inventory/requisitions/new", icon: "kanban",    roles: ["INVENTORY", ...DIRECTION] },
     ],
   },
 
@@ -161,10 +164,11 @@ const SECTIONS: RoledSection[] = [
     icon: "finance",
     roles: ["ACCOUNTING", ...DIRECTION],
     items: [
-      { label: "Reportes globales", href: "/app/reports",           icon: "reports",     roles: ["ACCOUNTING", ...DIRECTION] },
-      { label: "Gastos globales",   href: "/app/owner/expenses",    icon: "expenses",    roles: [...DIRECTION] },
-      { label: "Retiros globales",  href: "/app/owner/withdrawals", icon: "withdrawals", roles: [...DIRECTION] },
-      { label: "Ventas (contable)", href: "/app/accounting",        icon: "sales",       roles: ["ACCOUNTING", ...DIRECTION] },
+      { label: "Pagos pendientes",  href: "/app/accounting/payable", icon: "creditcard",  roles: ["ACCOUNTING", ...DIRECTION] },
+      { label: "Reportes globales", href: "/app/reports",            icon: "reports",     roles: ["ACCOUNTING", ...DIRECTION] },
+      { label: "Gastos globales",   href: "/app/owner/expenses",     icon: "expenses",    roles: [...DIRECTION] },
+      { label: "Retiros globales",  href: "/app/owner/withdrawals",  icon: "withdrawals", roles: [...DIRECTION] },
+      { label: "Ventas (contable)", href: "/app/accounting",         icon: "sales",       roles: ["ACCOUNTING", ...DIRECTION] },
     ],
   },
 
@@ -179,7 +183,7 @@ const SECTIONS: RoledSection[] = [
     ],
   },
 
-  // ───────────────── Admin - Importar data (NUEVO) ─────────────────
+  // ───────────────── Admin - Importar data ─────────────────
   {
     title: "Importar data",
     icon: "database",

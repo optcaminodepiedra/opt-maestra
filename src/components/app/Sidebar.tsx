@@ -36,6 +36,8 @@ import {
   Clock,
   Database,
   History,
+  Bell,
+  CreditCard,
   CircleDot,
 } from "lucide-react";
 
@@ -67,13 +69,14 @@ const iconMap: Record<IconName, any> = {
   payroll: BadgeDollarSign,
   iot: RadioTower,
 
-  // Nuevos íconos Fase 5
   database: Database,
   history: History,
+
+  bell: Bell,
+  creditcard: CreditCard,
 };
 
 // Fallback seguro: si un ícono no está registrado, usamos CircleDot
-// en vez de crashear la app con undefined.
 function resolveIcon(name: string | undefined) {
   if (!name) return CircleDot;
   const Icon = (iconMap as Record<string, any>)[name];
@@ -84,13 +87,18 @@ function ItemRow({
   it,
   pathname,
   onNavigate,
+  unreadCount,
 }: {
   it: NavItem;
   pathname: string;
   onNavigate?: () => void;
+  unreadCount?: number;
 }) {
   const active = pathname === it.href || pathname.startsWith(it.href + "/");
   const Icon = resolveIcon(it.icon);
+
+  // Badge especial para notificaciones: contador en vez de texto
+  const showNotifCount = it.href === "/app/notifications" && unreadCount && unreadCount > 0;
 
   return (
     <Link
@@ -110,7 +118,11 @@ function ItemRow({
       />
       <span className="flex-1">{it.label}</span>
 
-      {it.badge ? (
+      {showNotifCount ? (
+        <span className="text-[10px] px-1.5 py-[2px] rounded-full bg-red-500 text-white font-semibold min-w-[18px] text-center">
+          {unreadCount > 99 ? "99+" : unreadCount}
+        </span>
+      ) : it.badge ? (
         <span className="text-[10px] px-2 py-[2px] rounded-full bg-muted text-muted-foreground border">
           {it.badge}
         </span>
@@ -122,9 +134,11 @@ function ItemRow({
 export function Sidebar({
   sections,
   onNavigate,
+  unreadNotifications,
 }: {
   sections: NavSection[];
   onNavigate?: () => void;
+  unreadNotifications?: number;
 }) {
   const pathname = usePathname();
 
@@ -165,6 +179,7 @@ export function Sidebar({
                         it={it}
                         pathname={pathname}
                         onNavigate={onNavigate}
+                        unreadCount={unreadNotifications}
                       />
                     ))}
                   </nav>
