@@ -72,7 +72,8 @@ model Business {
   restaurantOrders RestaurantOrder[] @relation("BusinessRestaurantOrders")
 
   inventoryItems InventoryItem[]
-  inventoryMoves InventoryMovement[]
+inventoryMovesOrigin       InventoryMovement[] @relation("InventoryMovementOrigin")
+inventoryMovesDestination  InventoryMovement[] @relation("InventoryMovementDestination")
   requisitions   Requisition[]
 
   hotelRoomTypes    HotelRoomType[]
@@ -558,15 +559,18 @@ model InventoryMovement {
   type        MovementType
   qty         Int
   note        String?
+  destinationBusinessId String?
   createdById String
   createdAt   DateTime     @default(now())
 
-  business  Business      @relation(fields: [businessId], references: [id])
+business             Business  @relation("InventoryMovementOrigin", fields: [businessId], references: [id])
+destinationBusiness  Business? @relation("InventoryMovementDestination", fields: [destinationBusinessId], references: [id])
   item      InventoryItem @relation(fields: [itemId], references: [id])
   createdBy User          @relation("InventoryMoveCreatedBy", fields: [createdById], references: [id])
 
   @@index([businessId, createdAt])
   @@index([itemId, createdAt])
+  @@index([destinationBusinessId])
 }
 
 model Requisition {

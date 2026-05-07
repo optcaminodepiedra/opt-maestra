@@ -1,47 +1,86 @@
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import { redirect } from "next/navigation";
-import { prisma } from "@/lib/prisma";
+import { authOptions } from "@/lib/auth";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, ArrowRightLeft } from "lucide-react";
+import { History, ArrowLeft } from "lucide-react";
 import Link from "next/link";
-import MovementForm from "./MovementForm";
+import { listInventoryMovements } from "@/lib/inventory.actions";
+import { ALMACEN_GENERAL_ID, ALMACEN_GENERAL_NAME } from "@/lib/inventory-constants";
+import { MovementsClient } from "@/components/inventory/MovementsClient";
 
-export default async function MovementsPage() {
+export const dynamic = "force-dynamic";
+
+const ALLOWED_ROLES = ["MASTER_ADMIN", "OWNER", "SUPERIOR", "INVENTORY", "ACCOUNTING"];
+
+export default async function MovementsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ businessId?: string }>;
+}) {
   const session = await getServerSession(authOptions);
   if (!session?.user) redirect("/login");
 
-  // Buscamos el negocio
-  const business = await prisma.business.findFirst();
-  if (!business) {
-    return <div className="p-12 text-center text-red-500">Error de sucursal.</div>;
+  const role = (session.user as any).role as string;
+  if (!ALLOWED_ROLES.includes(role)) {
+    return (
+      <div className="p-6 max-w-xl mx-auto">
+        <Card>
+          <CardHeader><CardTitle>Acceso restringido</CardTitle></CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            No tienes permisos para ver el historial de movimientos.
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
-  // Traemos el catálogo de productos ordenado alfabéticamente
-  const items = await prisma.inventoryItem.findMany({
-    where: { businessId: business.id, isActive: true },
-    orderBy: { name: "asc" },
-    select: { id: true, name: true, unit: true, onHandQty: true }
-  });
+  const sp = await searchParams;
+  const businessId = sp.businessId ?? ALMACEN_GENERAL_ID;
+
+  let businessName = ALMACEN_GENERAL_NAME;
+  if (businessId !== ALMACEN_GENERAL_ID) {
+    const { prisma } = await import("@/lib/prisma");
+    const biz = await prisma.business.findUnique({
+      where: { id: businessId },
+      select: { name: true },
+    });
+    businessName = biz?.name ?? "—";
+  }
+
+  let moves: any[] = [];
+  try {
+    moves = await listInventoryMovements({ businessId, limit: 200 });
+  } catch (err: any) {
+    return (
+      <div className="p-6 max-w-xl mx-auto">
+        <Card>
+          <CardHeader><CardTitle>Error</CardTitle></CardHeader>
+          <CardContent className="text-sm text-muted-foreground">{err.message}</CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
-    <div className="p-6 max-w-3xl mx-auto space-y-6">
-      <div className="flex items-center gap-4 border-b pb-4">
-        <Button variant="ghost" asChild>
-          <Link href="/app/inventory"><ArrowLeft className="w-4 h-4 mr-2" /> Volver</Link>
-        </Button>
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-            <ArrowRightLeft className="w-8 h-8 text-primary" />
-            Entradas y Salidas
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Registra llegada de proveedores, mermas o traspasos a otras áreas.
-          </p>
-        </div>
+    <div className="p-4 md:p-6 max-w-6xl mx-auto space-y-4">
+      <Button variant="ghost" size="sm" asChild>
+        <Link href={`/app/inventory/stock?businessId=${businessId}`}>
+          <ArrowLeft className="w-4 h-4 mr-1" /> Volver al stock
+        </Link>
+      </Button>
+
+      <div>
+        <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-2">
+          <History className="w-7 h-7 text-blue-500" />
+          Historial de movimientos — {businessName}
+        </h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Entradas, salidas, ajustes y transferencias de inventario
+        </p>
       </div>
 
-      <MovementForm businessId={business.id} userId={session.user.id} items={items} />
+      <MovementsClient moves={moves} />
     </div>
   );
 }

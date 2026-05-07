@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, useMemo } from "react";
+import { useState, useTransition, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,8 +10,10 @@ import {
   Plus, Trash2, Search, AlertCircle, CheckCircle2, Package,
   UtensilsCrossed, Sparkles, Home, Coffee, Layers,
   AlertTriangle, ArrowLeft, Edit3, ShoppingCart, ArrowRight,
+  Building2, X,
 } from "lucide-react";
 import { createRequisition } from "@/lib/requisitions.actions";
+import { ALMACEN_GENERAL_ID, ALMACEN_GENERAL_NAME, requiresOperationalBusiness } from "@/lib/inventory-constants";
 
 type InventoryItem = {
   id: string;
@@ -50,212 +52,257 @@ type RequisitionKindOption = {
   key: "RESTAURANT" | "SPECIAL_EVENT" | "OWNER_HOUSE" | "VENDING_MACHINE";
   label: string;
   description: string;
+  emoji: string;
   icon: any;
   color: string;
-  allowsFreeText: boolean;
-  isPrivate?: boolean;
+  allowFreeText: boolean;
+  needsBusiness: boolean;
 };
+
+const KIND_OPTIONS: RequisitionKindOption[] = [
+  {
+    key: "RESTAURANT",
+    label: "Restaurante",
+    description: "Insumos diarios para operación de restaurante",
+    emoji: "🍽️",
+    icon: UtensilsCrossed,
+    color: "border-orange-300 bg-orange-50",
+    allowFreeText: false,
+    needsBusiness: true,
+  },
+  {
+    key: "SPECIAL_EVENT",
+    label: "Evento especial",
+    description: "Para eventos como Día de las Madres, cumpleaños, etc.",
+    emoji: "✨",
+    icon: Sparkles,
+    color: "border-purple-300 bg-purple-50",
+    allowFreeText: true,
+    needsBusiness: true,
+  },
+  {
+    key: "OWNER_HOUSE",
+    label: "Casa Navarro Smith",
+    description: "Productos para la casa de los dueños (privado)",
+    emoji: "🏠",
+    icon: Home,
+    color: "border-amber-300 bg-amber-50",
+    allowFreeText: true,
+    needsBusiness: false,
+  },
+  {
+    key: "VENDING_MACHINE",
+    label: "Máquina dispensadora",
+    description: "Reposición de productos para máquina expendedora",
+    emoji: "🥤",
+    icon: Coffee,
+    color: "border-cyan-300 bg-cyan-50",
+    allowFreeText: true,
+    needsBusiness: false,
+  },
+];
 
 type Props = {
   businesses: Business[];
-  selectedBusinessId: string;
+  selectedBusinessId: string | null;
   items: InventoryItem[];
   userRole: string;
-  initialKind?: string;
+  initialKind?: "RESTAURANT" | "SPECIAL_EVENT" | "OWNER_HOUSE" | "VENDING_MACHINE";
 };
 
 const fmt = (cents: number) =>
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(cents / 100);
 
-export function NewRequisitionWizard({ businesses, selectedBusinessId, items, userRole, initialKind }: Props) {
+export function NewRequisitionWizard({
+  businesses,
+  selectedBusinessId: initialBusinessId,
+  items,
+  userRole,
+  initialKind,
+}: Props) {
   const router = useRouter();
-  const [pending, startTransition] = useTransition();
+  const [pending, start] = useTransition();
 
-  const allKinds: RequisitionKindOption[] = [
-    { key: "RESTAURANT",      label: "Restaurante",        description: "Insumos diarios del restaurante (solo catálogo)", icon: UtensilsCrossed, color: "blue",   allowsFreeText: false },
-    { key: "SPECIAL_EVENT",   label: "Evento especial",    description: "Día de las madres, eventos, ocasiones especiales", icon: Sparkles,        color: "purple", allowsFreeText: true  },
-    { key: "OWNER_HOUSE",     label: "Casa Navarro Smith", description: "Compras privadas para los dueños",                 icon: Home,            color: "amber",  allowsFreeText: true, isPrivate: true },
-    { key: "VENDING_MACHINE", label: "Dispensadora",       description: "Refacciones y suministros de máquinas",            icon: Coffee,          color: "green",  allowsFreeText: true },
-  ];
-
-  // Filtrar tipos según rol
-  const isAdmin = ["MASTER_ADMIN", "OWNER", "SUPERIOR"].includes(userRole);
-  const isInventory = userRole === "INVENTORY";
-  const availableKinds = allKinds.filter((k) => {
-    if (isAdmin || isInventory) return true; // admin/Goyo todos
+  // Determinar tipos disponibles según rol
+  const isInventoryRole = ["INVENTORY", "MASTER_ADMIN", "OWNER", "SUPERIOR"].includes(userRole);
+  const availableKinds = useMemo(() => {
+    if (isInventoryRole) {
+      // Goyo + admins: todos
+      return KIND_OPTIONS;
+    }
     // Gerentes: solo RESTAURANT y SPECIAL_EVENT
-    return k.key === "RESTAURANT" || k.key === "SPECIAL_EVENT";
-  });
+    return KIND_OPTIONS.filter((k) => ["RESTAURANT", "SPECIAL_EVENT"].includes(k.key));
+  }, [isInventoryRole]);
 
+  // Estado: paso actual
   const [step, setStep] = useState<"kind" | "details">(initialKind ? "details" : "kind");
-  const [selectedKind, setSelectedKind] = useState<RequisitionKindOption | null>(
-    initialKind ? availableKinds.find((k) => k.key === initialKind) ?? null : null
+  const [kind, setKind] = useState<RequisitionKindOption | null>(
+    initialKind ? KIND_OPTIONS.find((k) => k.key === initialKind) ?? null : null
   );
 
-  // Form data
-  const [businessId, setBusinessId] = useState(selectedBusinessId);
+  // Detalles
+  const [businessId, setBusinessId] = useState<string>(initialBusinessId ?? "");
   const [title, setTitle] = useState("");
   const [eventName, setEventName] = useState("");
   const [priority, setPriority] = useState<"NORMAL" | "URGENT">("NORMAL");
   const [urgentNote, setUrgentNote] = useState("");
   const [requiresSeparatePayment, setRequiresSeparatePayment] = useState(false);
-  const [note, setNote] = useState("");
-  const [neededBy, setNeededBy] = useState("");
+  const [neededByIso, setNeededByIso] = useState("");
+  const [generalNote, setGeneralNote] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
 
+  // Buscador de productos
   const [search, setSearch] = useState("");
-  const [showFreeTextForm, setShowFreeTextForm] = useState(false);
-  const [freeForm, setFreeForm] = useState({
-    name: "",
-    unit: "pz",
-    qty: 1,
-    price: 0,
-    note: "",
-  });
+  const [showSearch, setShowSearch] = useState(false);
 
+  // Errores
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
 
-  const itemById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
-  const usedCatalogIds = useMemo(
-    () => new Set(lines.filter((l) => l.kind === "catalog").map((l) => (l as CatalogLine).itemId)),
-    [lines]
-  );
+  // Si el tipo no requiere negocio operativo, asignar Almacén General
+  useEffect(() => {
+    if (kind && !kind.needsBusiness) {
+      setBusinessId(ALMACEN_GENERAL_ID);
+    } else if (kind && kind.needsBusiness && businessId === ALMACEN_GENERAL_ID) {
+      // Si cambió a un tipo que SÍ requiere negocio, resetear
+      setBusinessId(initialBusinessId ?? "");
+    }
+  }, [kind, initialBusinessId]);
 
+  // Filtrar items por búsqueda
   const filteredItems = useMemo(() => {
+    if (!search.trim()) return items;
     const q = search.trim().toLowerCase();
-    return items.filter((i) => {
-      if (usedCatalogIds.has(i.id)) return false;
-      if (!q) return true;
+    return items.filter((it) => {
       return (
-        i.name.toLowerCase().includes(q) ||
-        i.sku?.toLowerCase().includes(q) ||
-        i.category?.toLowerCase().includes(q)
+        it.name.toLowerCase().includes(q) ||
+        (it.sku ?? "").toLowerCase().includes(q) ||
+        (it.category ?? "").toLowerCase().includes(q) ||
+        (it.supplierName ?? "").toLowerCase().includes(q)
       );
     });
-  }, [items, search, usedCatalogIds]);
+  }, [items, search]);
 
-  const grouped = useMemo(() => {
-    const g: Record<string, InventoryItem[]> = {};
-    for (const it of filteredItems) {
-      const cat = it.category ?? "Sin categoría";
-      if (!g[cat]) g[cat] = [];
-      g[cat].push(it);
-    }
-    return g;
-  }, [filteredItems]);
+  // Items ya agregados (para no mostrarlos de nuevo)
+  const addedItemIds = new Set(
+    lines.filter((l): l is CatalogLine => l.kind === "catalog").map((l) => l.itemId)
+  );
 
-  const estimatedTotal = useMemo(() => {
-    return lines.reduce((sum, l) => sum + l.qty * l.estimatedPriceCents, 0);
-  }, [lines]);
+  function selectKind(k: RequisitionKindOption) {
+    setKind(k);
+    setStep("details");
+    setError(null);
+  }
 
   function addCatalogLine(item: InventoryItem) {
-    const suggestedQty = Math.max(item.minQty - item.onHandQty, 1);
-    setLines([...lines, {
-      kind: "catalog",
-      itemId: item.id,
-      qty: suggestedQty,
-      note: "",
-      estimatedPriceCents: item.lastPriceCents,
-    }]);
+    if (addedItemIds.has(item.id)) return;
+    setLines((prev) => [
+      ...prev,
+      {
+        kind: "catalog",
+        itemId: item.id,
+        qty: 1,
+        note: "",
+        estimatedPriceCents: item.lastPriceCents,
+      },
+    ]);
+    setSearch("");
+    setShowSearch(false);
   }
 
   function addFreeLine() {
-    if (!freeForm.name.trim()) return setError("Nombre requerido");
-    if (!freeForm.unit.trim()) return setError("Unidad requerida");
-    if (freeForm.qty <= 0) return setError("Cantidad inválida");
-    setError(null);
-    setLines([...lines, {
-      kind: "free",
-      freeTextName: freeForm.name,
-      freeTextUnit: freeForm.unit,
-      qty: freeForm.qty,
-      note: freeForm.note,
-      estimatedPriceCents: Math.round(freeForm.price * 100),
-    }]);
-    setFreeForm({ name: "", unit: "pz", qty: 1, price: 0, note: "" });
-    setShowFreeTextForm(false);
+    setLines((prev) => [
+      ...prev,
+      {
+        kind: "free",
+        freeTextName: "",
+        freeTextUnit: "pz",
+        qty: 1,
+        note: "",
+        estimatedPriceCents: 0,
+      },
+    ]);
   }
 
-  function updateLine(index: number, patch: Partial<Line>) {
-    setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } as Line : l)));
+  function updateLine(idx: number, patch: Partial<Line>) {
+    setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } as Line : l)));
   }
 
-  function removeLine(index: number) {
-    setLines((prev) => prev.filter((_, i) => i !== index));
+  function removeLine(idx: number) {
+    setLines((prev) => prev.filter((_, i) => i !== idx));
   }
+
+  function getItemById(id: string) {
+    return items.find((i) => i.id === id);
+  }
+
+  // Total estimado
+  const totalCents = lines.reduce((sum, l) => sum + l.qty * l.estimatedPriceCents, 0);
 
   function submit() {
-    setError(null);
-    if (!selectedKind) return setError("Selecciona el tipo de requisición.");
-    if (!title.trim()) return setError("El título es obligatorio.");
-    if (selectedKind.key === "SPECIAL_EVENT" && !eventName.trim()) {
-      return setError("Para eventos especiales, indica el nombre del evento.");
-    }
-    if (priority === "URGENT" && !urgentNote.trim()) {
-      return setError("Si es urgente, explica por qué.");
-    }
-    if (lines.length === 0) return setError("Agrega al menos un producto.");
+    if (!kind) return setError("Selecciona un tipo de requisición");
+    if (!title.trim()) return setError("Agrega un título");
+    if (kind.needsBusiness && !businessId) return setError("Selecciona un negocio");
+    if (kind.key === "SPECIAL_EVENT" && !eventName.trim()) return setError("Agrega el nombre del evento");
+    if (priority === "URGENT" && !urgentNote.trim()) return setError("Las requisiciones URGENTES requieren explicar por qué");
+    if (lines.length === 0) return setError("Agrega al menos un producto");
 
-    startTransition(async () => {
+    // Validar líneas
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (l.qty <= 0) return setError(`Línea ${i + 1}: cantidad inválida`);
+      if (l.kind === "free") {
+        if (!l.freeTextName.trim()) return setError(`Línea ${i + 1}: falta nombre del producto`);
+        if (!l.freeTextUnit.trim()) return setError(`Línea ${i + 1}: falta unidad`);
+      }
+    }
+
+    setError(null);
+
+    start(async () => {
       try {
-        await createRequisition({
+        const payload = {
           businessId,
-          kind: selectedKind.key,
+          kind: kind.key,
           title: title.trim(),
-          eventName: selectedKind.key === "SPECIAL_EVENT" ? eventName.trim() : undefined,
+          eventName: eventName.trim() || undefined,
           priority,
           urgentNote: priority === "URGENT" ? urgentNote.trim() : undefined,
           requiresSeparatePayment,
-          note: note.trim() || undefined,
-          neededByIso: neededBy || undefined,
+          note: generalNote.trim() || undefined,
+          neededByIso: neededByIso || undefined,
           items: lines.map((l) => {
             if (l.kind === "catalog") {
               return {
                 itemId: l.itemId,
                 qtyRequested: l.qty,
-                note: l.note || undefined,
-                estimatedPriceCents: l.estimatedPriceCents,
-              };
-            } else {
-              return {
-                freeTextName: l.freeTextName,
-                freeTextUnit: l.freeTextUnit,
-                qtyRequested: l.qty,
-                note: l.note || undefined,
+                note: l.note.trim() || undefined,
                 estimatedPriceCents: l.estimatedPriceCents,
               };
             }
+            return {
+              freeTextName: l.freeTextName.trim(),
+              freeTextUnit: l.freeTextUnit.trim(),
+              qtyRequested: l.qty,
+              note: l.note.trim() || undefined,
+              estimatedPriceCents: l.estimatedPriceCents,
+            };
           }),
-        });
-        setSuccess(true);
-        setTimeout(() => router.push("/app/inventory"), 1200);
+        };
+        const res = await createRequisition(payload as any);
+        router.push(`/app/inventory/requisitions/${res.requisitionId}`);
       } catch (err: any) {
-        setError(err.message ?? "Error al crear requisición.");
+        setError(err.message);
       }
     });
   }
 
-  if (success) {
-    return (
-      <Card>
-        <CardContent className="py-12 text-center space-y-3">
-          <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center mx-auto">
-            <CheckCircle2 className="w-7 h-7 text-green-600" />
-          </div>
-          <p className="text-base font-medium">Requisición enviada</p>
-          <p className="text-sm text-muted-foreground">Redirigiendo...</p>
-        </CardContent>
-      </Card>
-    );
-  }
+  /* ═══════════════════════════ Step 1: elegir tipo ═══════════════════════════ */
 
-  // Paso 1: Elegir tipo
   if (step === "kind") {
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">¿Qué tipo de requisición vas a crear?</CardTitle>
+          <CardTitle className="text-base">¿Qué tipo de requisición?</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid gap-3 md:grid-cols-2">
@@ -264,29 +311,24 @@ export function NewRequisitionWizard({ businesses, selectedBusinessId, items, us
               return (
                 <button
                   key={k.key}
-                  type="button"
-                  onClick={() => { setSelectedKind(k); setStep("details"); }}
-                  className="text-left border rounded-lg p-4 hover:border-primary hover:bg-muted/20 transition-colors"
+                  onClick={() => selectKind(k)}
+                  className={`text-left border-2 rounded-lg p-4 transition hover:border-primary hover:bg-muted/20 ${k.color}`}
                 >
-                  <div className="flex items-center gap-2 mb-1">
-                    <Icon className={`w-5 h-5 text-${k.color}-600`} />
+                  <div className="flex items-center gap-3 mb-1">
+                    <span className="text-2xl">{k.emoji}</span>
                     <h3 className="font-semibold">{k.label}</h3>
-                    {k.isPrivate && (
-                      <Badge variant="outline" className="text-[9px] ml-auto bg-amber-50 text-amber-700 border-amber-200">
-                        🔒 Privada
-                      </Badge>
-                    )}
+                    <Icon className="w-4 h-4 ml-auto text-muted-foreground" />
                   </div>
-                  <p className="text-xs text-muted-foreground mb-2">{k.description}</p>
-                  <div className="flex flex-wrap gap-1">
-                    {k.allowsFreeText && (
-                      <Badge variant="secondary" className="text-[9px]">
-                        Productos libres permitidos
+                  <p className="text-xs text-muted-foreground">{k.description}</p>
+                  <div className="flex gap-1 mt-2 flex-wrap">
+                    {k.allowFreeText && (
+                      <Badge variant="outline" className="text-[9px] bg-white">
+                        Productos libres ✓
                       </Badge>
                     )}
-                    {!k.allowsFreeText && (
-                      <Badge variant="outline" className="text-[9px]">
-                        Solo catálogo
+                    {!k.needsBusiness && (
+                      <Badge variant="outline" className="text-[9px] bg-white">
+                        Sin negocio
                       </Badge>
                     )}
                   </div>
@@ -294,386 +336,458 @@ export function NewRequisitionWizard({ businesses, selectedBusinessId, items, us
               );
             })}
           </div>
+
+          {availableKinds.length === 0 && (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              Tu rol no tiene permisos para crear requisiciones.
+            </p>
+          )}
         </CardContent>
       </Card>
     );
   }
 
-  // Paso 2: Detalles + items
-  if (!selectedKind) return null;
+  /* ═══════════════════════════ Step 2: detalles ═══════════════════════════ */
 
-  const KindIcon = selectedKind.icon;
+  if (!kind) return null;
+  const KindIcon = kind.icon;
 
   return (
     <div className="space-y-4">
-      {/* Header con tipo seleccionado */}
-      <Card>
-        <CardContent className="py-3 flex items-center justify-between gap-3">
+      <Button variant="ghost" size="sm" onClick={() => setStep("kind")}>
+        <ArrowLeft className="w-4 h-4 mr-1" /> Cambiar tipo
+      </Button>
+
+      <Card className={kind.color}>
+        <CardContent className="py-3">
           <div className="flex items-center gap-3">
-            <div className={`w-9 h-9 rounded-lg bg-${selectedKind.color}-100 flex items-center justify-center`}>
-              <KindIcon className={`w-4 h-4 text-${selectedKind.color}-600`} />
-            </div>
+            <span className="text-2xl">{kind.emoji}</span>
             <div>
-              <p className="text-sm font-semibold">{selectedKind.label}</p>
-              <p className="text-xs text-muted-foreground">{selectedKind.description}</p>
+              <p className="font-semibold">{kind.label}</p>
+              <p className="text-xs text-muted-foreground">{kind.description}</p>
             </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={() => setStep("kind")}>
-            <Edit3 className="w-3.5 h-3.5 mr-1" /> Cambiar tipo
-          </Button>
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-5">
-        {/* Columna izquierda: catálogo + libre */}
-        <div className="lg:col-span-3 space-y-3">
-          {businesses.length > 1 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">Negocio</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-wrap gap-1.5">
+      {/* Datos generales */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Datos de la requisición</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="md:col-span-2">
+              <label className="text-[10px] text-muted-foreground uppercase">Título *</label>
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Ej: Insumos cocina semana 23"
+                className="w-full h-9 px-3 border rounded-lg text-sm bg-background mt-1"
+              />
+            </div>
+
+            {/* Negocio - SOLO si el tipo lo requiere */}
+            {kind.needsBusiness && (
+              <div className="md:col-span-2">
+                <label className="text-[10px] text-muted-foreground uppercase">Negocio *</label>
+                <select
+                  value={businessId}
+                  onChange={(e) => setBusinessId(e.target.value)}
+                  className="w-full h-9 px-3 border rounded-lg text-sm bg-background mt-1"
+                >
+                  <option value="">— Selecciona —</option>
                   {businesses.map((b) => (
-                    <button
-                      key={b.id}
-                      type="button"
-                      onClick={() => {
-                        if (lines.length > 0 && !confirm("Cambiar de negocio vaciará tu lista. ¿Continuar?")) return;
-                        setBusinessId(b.id);
-                        setLines([]);
-                        const url = new URL(window.location.href);
-                        url.searchParams.set("businessId", b.id);
-                        window.history.replaceState({}, "", url.toString());
-                      }}
-                      disabled={pending}
-                    >
-                      <Badge variant={b.id === businessId ? "default" : "outline"} className="cursor-pointer hover:opacity-80">
-                        {b.name}
-                      </Badge>
-                    </button>
+                    <option key={b.id} value={b.id}>{b.name}</option>
                   ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          <Card>
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <Package className="w-4 h-4" /> Productos
-                </CardTitle>
-                {selectedKind.allowsFreeText && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowFreeTextForm(!showFreeTextForm)}
-                    disabled={pending}
-                  >
-                    <Plus className="w-3.5 h-3.5 mr-1" /> Producto libre
-                  </Button>
-                )}
+                </select>
               </div>
-            </CardHeader>
-            <CardContent>
-              {showFreeTextForm && (
-                <div className="border-2 border-dashed border-purple-300 bg-purple-50/30 rounded-lg p-3 mb-3 space-y-2">
-                  <p className="text-xs font-medium text-purple-700">Producto libre (no en catálogo)</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      type="text"
-                      placeholder="Nombre del producto"
-                      value={freeForm.name}
-                      onChange={(e) => setFreeForm({ ...freeForm, name: e.target.value })}
-                      className="h-8 px-2 border rounded text-xs"
-                    />
-                    <input
-                      type="text"
-                      placeholder="Unidad (kg, pz, l)"
-                      value={freeForm.unit}
-                      onChange={(e) => setFreeForm({ ...freeForm, unit: e.target.value })}
-                      className="h-8 px-2 border rounded text-xs"
-                    />
-                    <input
-                      type="number"
-                      placeholder="Cantidad"
-                      min={1}
-                      value={freeForm.qty}
-                      onChange={(e) => setFreeForm({ ...freeForm, qty: parseInt(e.target.value) || 1 })}
-                      className="h-8 px-2 border rounded text-xs"
-                    />
-                    <input
-                      type="number"
-                      placeholder="Precio est. (opcional)"
-                      step="0.01"
-                      min={0}
-                      value={freeForm.price}
-                      onChange={(e) => setFreeForm({ ...freeForm, price: parseFloat(e.target.value) || 0 })}
-                      className="h-8 px-2 border rounded text-xs"
-                    />
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Nota (opcional)"
-                    value={freeForm.note}
-                    onChange={(e) => setFreeForm({ ...freeForm, note: e.target.value })}
-                    className="w-full h-8 px-2 border rounded text-xs"
-                  />
-                  <div className="flex justify-end gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => setShowFreeTextForm(false)} className="h-7 text-xs">Cancelar</Button>
-                    <Button size="sm" onClick={addFreeLine} className="h-7 text-xs">Agregar</Button>
-                  </div>
-                </div>
-              )}
+            )}
 
-              <div className="relative">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            {!kind.needsBusiness && (
+              <div className="md:col-span-2">
+                <div className="flex items-center gap-2 text-xs bg-muted/30 border rounded-lg p-2">
+                  <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
+                  <span className="text-muted-foreground">
+                    Esta requisición se asocia a <strong>{ALMACEN_GENERAL_NAME}</strong> (no a un negocio operativo)
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Nombre del evento - SOLO para SPECIAL_EVENT */}
+            {kind.key === "SPECIAL_EVENT" && (
+              <div className="md:col-span-2">
+                <label className="text-[10px] text-muted-foreground uppercase">
+                  Nombre del evento *
+                </label>
                 <input
                   type="text"
-                  placeholder="Buscar en catálogo..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="w-full h-10 pl-9 pr-3 border rounded-lg text-sm bg-background"
-                />
-              </div>
-
-              <div className="mt-3 max-h-[400px] overflow-y-auto space-y-3">
-                {Object.keys(grouped).length === 0 ? (
-                  <div className="text-center py-8 text-sm text-muted-foreground">
-                    {items.length === 0
-                      ? "No hay productos en el catálogo."
-                      : selectedKind.allowsFreeText
-                      ? "Sin resultados. Puedes agregar un producto libre arriba."
-                      : "Sin resultados."}
-                  </div>
-                ) : (
-                  Object.entries(grouped).map(([cat, catItems]) => (
-                    <div key={cat}>
-                      <p className="text-[10px] font-semibold text-muted-foreground uppercase mb-1 px-1">
-                        {cat}
-                      </p>
-                      <div className="space-y-1">
-                        {catItems.map((it) => {
-                          const isLow = it.onHandQty <= it.minQty;
-                          return (
-                            <button
-                              key={it.id}
-                              type="button"
-                              onClick={() => addCatalogLine(it)}
-                              className="w-full flex items-center justify-between gap-2 px-3 py-2 border rounded-lg text-left text-sm hover:bg-muted/30 hover:border-primary transition-colors"
-                            >
-                              <div className="min-w-0">
-                                <p className="font-medium truncate">{it.name}</p>
-                                <p className="text-xs text-muted-foreground truncate">
-                                  {it.sku ? `${it.sku} · ` : ""}
-                                  Stock: {it.onHandQty} {it.unit}
-                                  {it.minQty > 0 && ` · Mín ${it.minQty}`}
-                                  {it.lastPriceCents > 0 && ` · ${fmt(it.lastPriceCents)}`}
-                                </p>
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                {isLow && <Badge variant="destructive" className="text-[9px]">Bajo</Badge>}
-                                <Plus className="w-4 h-4 text-muted-foreground" />
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Columna derecha: detalles + lista */}
-        <div className="lg:col-span-2 space-y-3 lg:sticky lg:top-4 lg:self-start">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Detalles</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div>
-                <label className="text-[10px] text-muted-foreground uppercase">Título *</label>
-                <input
-                  type="text"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder={selectedKind.key === "SPECIAL_EVENT" ? "Ej: Compras Día de las Madres" : "Ej: Compras semana 15"}
+                  value={eventName}
+                  onChange={(e) => setEventName(e.target.value)}
+                  placeholder="Ej: Día de las Madres, Cumpleaños VIP, Boda Sánchez..."
                   className="w-full h-9 px-3 border rounded-lg text-sm bg-background mt-1"
-                  disabled={pending}
                 />
               </div>
+            )}
 
-              {selectedKind.key === "SPECIAL_EVENT" && (
-                <div>
-                  <label className="text-[10px] text-muted-foreground uppercase">Nombre del evento *</label>
-                  <input
-                    type="text"
-                    value={eventName}
-                    onChange={(e) => setEventName(e.target.value)}
-                    placeholder="Día de las Madres"
-                    className="w-full h-9 px-3 border rounded-lg text-sm bg-background mt-1"
-                    disabled={pending}
-                  />
-                </div>
-              )}
+            <div>
+              <label className="text-[10px] text-muted-foreground uppercase">Fecha límite (opcional)</label>
+              <input
+                type="date"
+                value={neededByIso}
+                onChange={(e) => setNeededByIso(e.target.value)}
+                className="w-full h-9 px-3 border rounded-lg text-sm bg-background mt-1"
+              />
+            </div>
 
-              <div>
-                <label className="text-[10px] text-muted-foreground uppercase">Fecha necesaria</label>
-                <input
-                  type="date"
-                  value={neededBy}
-                  onChange={(e) => setNeededBy(e.target.value)}
-                  className="w-full h-9 px-3 border rounded-lg text-sm bg-background mt-1"
-                  disabled={pending}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-muted-foreground uppercase">Prioridad</label>
+              <div className="grid grid-cols-2 gap-1 mt-1">
                 <button
                   type="button"
                   onClick={() => setPriority("NORMAL")}
-                  className={`h-9 px-3 border rounded-lg text-xs font-medium transition-colors ${
-                    priority === "NORMAL" ? "bg-primary text-primary-foreground border-primary" : "bg-background"
+                  className={`h-9 border rounded-lg text-sm transition ${
+                    priority === "NORMAL" ? "border-primary bg-primary/5 font-medium" : "hover:bg-muted/30"
                   }`}
-                  disabled={pending}
                 >
                   Normal
                 </button>
                 <button
                   type="button"
                   onClick={() => setPriority("URGENT")}
-                  className={`h-9 px-3 border rounded-lg text-xs font-medium transition-colors ${
-                    priority === "URGENT" ? "bg-red-600 text-white border-red-600" : "bg-background"
+                  className={`h-9 border rounded-lg text-sm transition flex items-center justify-center gap-1 ${
+                    priority === "URGENT" ? "border-red-400 bg-red-50 font-medium text-red-700" : "hover:bg-muted/30"
                   }`}
-                  disabled={pending}
                 >
                   🚨 Urgente
                 </button>
               </div>
+            </div>
+          </div>
 
-              {priority === "URGENT" && (
-                <div>
-                  <label className="text-[10px] text-red-600 uppercase">¿Por qué es urgente? *</label>
-                  <textarea
-                    value={urgentNote}
-                    onChange={(e) => setUrgentNote(e.target.value)}
-                    rows={2}
-                    placeholder="Explica brevemente..."
-                    className="w-full px-3 py-2 border rounded-lg text-sm bg-red-50/30 border-red-200 mt-1 resize-none"
-                    disabled={pending}
-                  />
-                </div>
-              )}
-
-              <label className="flex items-center gap-2 text-sm cursor-pointer p-2 bg-blue-50/30 border border-blue-200 rounded-lg">
-                <input
-                  type="checkbox"
-                  checked={requiresSeparatePayment}
-                  onChange={(e) => setRequiresSeparatePayment(e.target.checked)}
-                  disabled={pending}
-                />
-                <span>💳 Requiere pago aparte (genera cuenta por pagar)</span>
+          {/* Razón de urgencia */}
+          {priority === "URGENT" && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <label className="text-[10px] text-red-700 uppercase font-semibold">
+                ¿Por qué es urgente? *
               </label>
-
-              <div>
-                <label className="text-[10px] text-muted-foreground uppercase">Notas</label>
-                <textarea
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  rows={2}
-                  className="w-full px-3 py-2 border rounded-lg text-sm bg-background mt-1 resize-none"
-                  disabled={pending}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm">Productos ({lines.length})</CardTitle>
-                {estimatedTotal > 0 && (
-                  <span className="text-xs font-medium">{fmt(estimatedTotal)}</span>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              {lines.length === 0 ? (
-                <div className="p-6 text-center text-xs text-muted-foreground">
-                  Agrega productos del catálogo o libres.
-                </div>
-              ) : (
-                <div className="divide-y max-h-[400px] overflow-y-auto">
-                  {lines.map((line, idx) => {
-                    const name = line.kind === "catalog"
-                      ? itemById.get(line.itemId)?.name ?? "?"
-                      : line.freeTextName;
-                    const unit = line.kind === "catalog"
-                      ? itemById.get(line.itemId)?.unit ?? ""
-                      : line.freeTextUnit;
-                    return (
-                      <div key={idx} className="p-3">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0 flex-1">
-                            <p className="text-xs font-medium truncate">
-                              {name}
-                              {line.kind === "free" && (
-                                <Badge variant="outline" className="text-[9px] ml-1.5">
-                                  Libre
-                                </Badge>
-                              )}
-                            </p>
-                            <p className="text-[10px] text-muted-foreground">{unit}</p>
-                          </div>
-                          <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => removeLine(idx)} disabled={pending}>
-                            <Trash2 className="w-3 h-3 text-red-500" />
-                          </Button>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 mt-2">
-                          <input
-                            type="number"
-                            min={1}
-                            value={line.qty}
-                            onChange={(e) => updateLine(idx, { qty: parseInt(e.target.value) || 0 })}
-                            className="h-8 px-2 border rounded text-xs"
-                            disabled={pending}
-                          />
-                          <input
-                            type="text"
-                            placeholder="Nota"
-                            value={line.note}
-                            onChange={(e) => updateLine(idx, { note: e.target.value })}
-                            className="h-8 px-2 border rounded text-xs"
-                            disabled={pending}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {error && (
-            <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">
-              <AlertCircle className="w-4 h-4 shrink-0" /> {error}
+              <textarea
+                value={urgentNote}
+                onChange={(e) => setUrgentNote(e.target.value)}
+                placeholder="Explica brevemente la urgencia"
+                className="w-full p-2 border rounded text-sm bg-white mt-1 min-h-[60px]"
+              />
             </div>
           )}
 
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" className="flex-1" asChild disabled={pending}>
-              <Link href="/app/inventory">Cancelar</Link>
-            </Button>
-            <Button size="sm" className="flex-1" onClick={submit} disabled={pending || lines.length === 0}>
-              {pending ? "Enviando..." : "Enviar requisición"}
-            </Button>
+          {/* Pago aparte */}
+          <div className="flex items-start gap-2 p-3 border rounded-lg bg-muted/20">
+            <input
+              type="checkbox"
+              id="reqPayment"
+              checked={requiresSeparatePayment}
+              onChange={(e) => setRequiresSeparatePayment(e.target.checked)}
+              className="mt-0.5"
+            />
+            <label htmlFor="reqPayment" className="text-sm cursor-pointer">
+              <strong>Requiere pago aparte</strong>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Si lo marcas, al aprobar esta requisición se creará automáticamente una cuenta por pagar para que la contadora la procese.
+              </p>
+            </label>
           </div>
+
+          <div>
+            <label className="text-[10px] text-muted-foreground uppercase">Notas generales (opcional)</label>
+            <textarea
+              value={generalNote}
+              onChange={(e) => setGeneralNote(e.target.value)}
+              placeholder="Información adicional para Goyo..."
+              className="w-full p-2 border rounded-lg text-sm bg-background mt-1 min-h-[60px]"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Productos */}
+      <Card>
+        <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Package className="w-4 h-4" /> Productos solicitados
+              {lines.length > 0 && (
+                <Badge variant="outline" className="text-[10px]">
+                  {lines.length} línea(s)
+                </Badge>
+              )}
+            </CardTitle>
+            {totalCents > 0 && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Total estimado: <strong className="text-foreground">{fmt(totalCents)}</strong>
+              </p>
+            )}
+          </div>
+          <div className="flex gap-1">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowSearch((v) => !v)}
+            >
+              <Search className="w-3.5 h-3.5 mr-1" /> Catálogo
+            </Button>
+            {kind.allowFreeText && (
+              <Button size="sm" variant="outline" onClick={addFreeLine}>
+                <Edit3 className="w-3.5 h-3.5 mr-1" /> Producto libre
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {/* Buscador de productos */}
+          {showSearch && (
+            <div className="border rounded-lg overflow-hidden">
+              <div className="flex items-center gap-2 p-2 bg-muted/30 border-b">
+                <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Buscar producto..."
+                  className="flex-1 bg-transparent outline-none text-sm"
+                  autoFocus
+                />
+                <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => { setSearch(""); setShowSearch(false); }}>
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+              <div className="max-h-64 overflow-y-auto">
+                {items.length === 0 ? (
+                  <div className="p-6 text-center text-sm text-muted-foreground">
+                    <AlertTriangle className="w-6 h-6 mx-auto text-amber-500 mb-2" />
+                    Este negocio no tiene productos en el catálogo todavía.
+                    {kind.allowFreeText && (
+                      <p className="text-xs mt-1">Usa "Producto libre" para agregar items que no estén en el catálogo.</p>
+                    )}
+                  </div>
+                ) : filteredItems.length === 0 ? (
+                  <div className="p-4 text-center text-sm text-muted-foreground">
+                    Sin resultados para "{search}"
+                  </div>
+                ) : (
+                  <div className="divide-y">
+                    {filteredItems.slice(0, 30).map((it) => {
+                      const alreadyAdded = addedItemIds.has(it.id);
+                      return (
+                        <button
+                          key={it.id}
+                          onClick={() => addCatalogLine(it)}
+                          disabled={alreadyAdded}
+                          className={`w-full text-left p-2.5 hover:bg-muted/30 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2`}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-sm font-medium truncate">{it.name}</p>
+                              {it.sku && (
+                                <Badge variant="outline" className="text-[9px]">{it.sku}</Badge>
+                              )}
+                              {it.category && (
+                                <Badge variant="secondary" className="text-[9px]">{it.category}</Badge>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-muted-foreground">
+                              Stock: {it.onHandQty} {it.unit.toLowerCase()}
+                              {it.lastPriceCents > 0 && ` · ${fmt(it.lastPriceCents)} c/u`}
+                              {it.supplierName && ` · ${it.supplierName}`}
+                            </p>
+                          </div>
+                          {alreadyAdded ? (
+                            <Badge variant="outline" className="text-[10px] bg-green-50 text-green-700 border-green-200 shrink-0">
+                              <CheckCircle2 className="w-2.5 h-2.5 mr-0.5" />
+                              Agregado
+                            </Badge>
+                          ) : (
+                            <Plus className="w-4 h-4 text-muted-foreground shrink-0" />
+                          )}
+                        </button>
+                      );
+                    })}
+                    {filteredItems.length > 30 && (
+                      <div className="p-2 text-center text-[10px] text-muted-foreground bg-muted/20">
+                        Mostrando 30 de {filteredItems.length}. Refina la búsqueda.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Líneas agregadas */}
+          {lines.length === 0 ? (
+            <div className="border-2 border-dashed rounded-lg p-8 text-center">
+              <ShoppingCart className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
+              <p className="text-sm text-muted-foreground">
+                Aún no has agregado productos
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Usa los botones de arriba para agregar del catálogo o productos libres
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {lines.map((line, idx) => {
+                if (line.kind === "catalog") {
+                  const item = getItemById(line.itemId);
+                  if (!item) return null;
+                  return (
+                    <div key={idx} className="border rounded-lg p-3 bg-blue-50/30">
+                      <div className="flex items-start gap-3">
+                        <Package className="w-4 h-4 text-blue-600 shrink-0 mt-1" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="font-medium text-sm">{item.name}</p>
+                            <Badge variant="outline" className="text-[9px]">Catálogo</Badge>
+                            {item.sku && <Badge variant="secondary" className="text-[9px]">{item.sku}</Badge>}
+                          </div>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">
+                            Stock actual: {item.onHandQty} {item.unit.toLowerCase()}
+                          </p>
+                          <div className="grid grid-cols-3 gap-2 mt-2">
+                            <div>
+                              <label className="text-[9px] text-muted-foreground uppercase">Cantidad</label>
+                              <input
+                                type="number"
+                                min="1"
+                                value={line.qty}
+                                onChange={(e) => updateLine(idx, { qty: parseInt(e.target.value) || 0 })}
+                                className="w-full h-8 px-2 border rounded text-sm bg-background"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[9px] text-muted-foreground uppercase">Precio est. (c/u)</label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={line.estimatedPriceCents / 100}
+                                onChange={(e) => updateLine(idx, {
+                                  estimatedPriceCents: Math.round((parseFloat(e.target.value) || 0) * 100),
+                                })}
+                                className="w-full h-8 px-2 border rounded text-sm bg-background"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[9px] text-muted-foreground uppercase">Subtotal</label>
+                              <p className="h-8 px-2 flex items-center text-sm font-medium">
+                                {fmt(line.qty * line.estimatedPriceCents)}
+                              </p>
+                            </div>
+                          </div>
+                          <input
+                            type="text"
+                            value={line.note}
+                            onChange={(e) => updateLine(idx, { note: e.target.value })}
+                            placeholder="Nota (opcional)"
+                            className="w-full h-8 px-2 border rounded text-xs bg-background mt-2"
+                          />
+                        </div>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 shrink-0" onClick={() => removeLine(idx)}>
+                          <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // Free line
+                return (
+                  <div key={idx} className="border rounded-lg p-3 bg-purple-50/30">
+                    <div className="flex items-start gap-3">
+                      <Edit3 className="w-4 h-4 text-purple-600 shrink-0 mt-1" />
+                      <div className="flex-1 min-w-0">
+                        <Badge variant="outline" className="text-[9px] mb-2">Producto libre</Badge>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-[9px] text-muted-foreground uppercase">Nombre del producto</label>
+                            <input
+                              type="text"
+                              value={line.freeTextName}
+                              onChange={(e) => updateLine(idx, { freeTextName: e.target.value })}
+                              placeholder="Ej: Vino tinto importado"
+                              className="w-full h-8 px-2 border rounded text-sm bg-background"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] text-muted-foreground uppercase">Unidad</label>
+                            <input
+                              type="text"
+                              value={line.freeTextUnit}
+                              onChange={(e) => updateLine(idx, { freeTextUnit: e.target.value })}
+                              placeholder="kg, pz, l"
+                              className="w-full h-8 px-2 border rounded text-sm bg-background"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] text-muted-foreground uppercase">Cantidad</label>
+                            <input
+                              type="number"
+                              min="1"
+                              value={line.qty}
+                              onChange={(e) => updateLine(idx, { qty: parseInt(e.target.value) || 0 })}
+                              className="w-full h-8 px-2 border rounded text-sm bg-background"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] text-muted-foreground uppercase">Precio est. (c/u)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={line.estimatedPriceCents / 100}
+                              onChange={(e) => updateLine(idx, {
+                                estimatedPriceCents: Math.round((parseFloat(e.target.value) || 0) * 100),
+                              })}
+                              className="w-full h-8 px-2 border rounded text-sm bg-background"
+                            />
+                          </div>
+                        </div>
+                        <input
+                          type="text"
+                          value={line.note}
+                          onChange={(e) => updateLine(idx, { note: e.target.value })}
+                          placeholder="Nota (opcional)"
+                          className="w-full h-8 px-2 border rounded text-xs bg-background mt-2"
+                        />
+                      </div>
+                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0 shrink-0" onClick={() => removeLine(idx)}>
+                        <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Errores y submit */}
+      {error && (
+        <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          {error}
         </div>
+      )}
+
+      <div className="flex justify-end gap-2 pb-6">
+        <Button variant="outline" asChild disabled={pending}>
+          <Link href="/app/inventory">Cancelar</Link>
+        </Button>
+        <Button onClick={submit} disabled={pending}>
+          {pending ? "Enviando..." : "Enviar requisición"}
+        </Button>
       </div>
     </div>
   );

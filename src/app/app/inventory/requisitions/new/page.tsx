@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Plus, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { NewRequisitionWizard } from "@/components/inventory/NewRequisitionWizard";
+import { ALMACEN_GENERAL_ID } from "@/lib/inventory-constants";
 
 export const dynamic = "force-dynamic";
 
@@ -41,19 +42,20 @@ export default async function NewRequisitionPage({
   }
 
   const sp = await searchParams;
+  const isInventoryRole = ["MASTER_ADMIN", "OWNER", "SUPERIOR", "INVENTORY"].includes(role);
 
-  // Determinar negocios visibles según rol
-  const isAdmin = ["MASTER_ADMIN", "OWNER", "SUPERIOR", "INVENTORY"].includes(role);
-
+  // Determinar negocios visibles
   let businesses: { id: string; name: string }[];
-
-  if (isAdmin) {
+  if (isInventoryRole) {
+    // Goyo + admins ven todos los negocios EXCEPTO Almacén General
+    // (porque Almacén General se asigna automáticamente a OWNER_HOUSE/VENDING_MACHINE)
     businesses = await prisma.business.findMany({
+      where: { id: { not: ALMACEN_GENERAL_ID } },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     });
   } else {
-    // Manager: solo su negocio principal + los que tenga acceso vía UserBusinessAccess
+    // Manager: solo su negocio principal + accesos
     const userId = me.id!;
     const businessIds: string[] = me.primaryBusinessId ? [me.primaryBusinessId] : [];
     try {
@@ -85,17 +87,21 @@ export default async function NewRequisitionPage({
     });
   }
 
-  // Determinar negocio seleccionado
+  // Determinar negocio seleccionado por defecto
   const selectedBusinessId =
     sp.businessId && businesses.some((b) => b.id === sp.businessId)
       ? sp.businessId
       : businesses[0]?.id ?? null;
 
-  // Cargar items del catálogo del negocio seleccionado
+  // ─── CARGAR ITEMS DEL CATÁLOGO ────────────────────────────
+  // Si es Goyo o admin, cargamos del Almacén General (su catálogo)
+  // Si es gerente, cargamos del negocio seleccionado
+  const itemsBusinessId = isInventoryRole ? ALMACEN_GENERAL_ID : selectedBusinessId;
+
   let items: any[] = [];
-  if (selectedBusinessId) {
+  if (itemsBusinessId) {
     items = await prisma.inventoryItem.findMany({
-      where: { businessId: selectedBusinessId, isActive: true },
+      where: { businessId: itemsBusinessId, isActive: true },
       select: {
         id: true,
         name: true,
@@ -111,7 +117,6 @@ export default async function NewRequisitionPage({
     });
   }
 
-  // Validar que el initialKind sea uno de los permitidos
   const validKinds = ["RESTAURANT", "SPECIAL_EVENT", "OWNER_HOUSE", "VENDING_MACHINE"];
   const initialKind = sp.kind && validKinds.includes(sp.kind) ? sp.kind : undefined;
 
