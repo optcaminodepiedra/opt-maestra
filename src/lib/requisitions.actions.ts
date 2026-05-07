@@ -1,6 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
+import { ALMACEN_GENERAL_ID } from "@/lib/inventory-constants";
 import { getMe, isManager } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { notifyRole, notifyUser } from "@/lib/notifications.actions";
@@ -124,14 +125,20 @@ export async function createRequisition(input: CreateRequisitionInput) {
     }
   }
 
-  // Validar que los items del catálogo existen y pertenecen al negocio
+  // Validar que los items del catálogo existen en el Almacén General
+  // (catálogo unificado: Goyo administra el catálogo maestro y todas las
+  // requisiciones se solicitan desde ahí, sin importar el negocio)
   if (itemsCatalogIds.length > 0) {
     const valid = await prisma.inventoryItem.findMany({
-      where: { id: { in: itemsCatalogIds }, businessId: input.businessId },
+      where: {
+        id: { in: itemsCatalogIds },
+        businessId: ALMACEN_GENERAL_ID,
+        isActive: true,
+      },
       select: { id: true, lastPriceCents: true },
     });
     if (valid.length !== itemsCatalogIds.length) {
-      throw new Error("Algún producto no pertenece a este negocio.");
+      throw new Error("Algún producto del catálogo no es válido o ha sido desactivado.");
     }
     var priceMap = new Map(valid.map((v) => [v.id, v.lastPriceCents]));
   } else {
