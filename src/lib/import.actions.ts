@@ -418,6 +418,31 @@ async function importReservations(
 
 /* ═══════════════════════════ Inventario ═══════════════════════════ */
 
+
+/**
+ * Convierte texto libre de unidad a un valor del enum StockUnit.
+ * Acepta: "kg", "KG", "kilo", "kilos", "pz", "pieza", "lt", "l", "litro",
+ *         "box", "caja", "pack", "paquete", etc.
+ * Si no reconoce, devuelve PIECE como default.
+ */
+function normalizeStockUnit(raw: string): "PIECE" | "KG" | "LT" | "BOX" | "PACK" {
+  const v = (raw || "").trim().toLowerCase();
+
+  // KG
+  if (["kg", "kgs", "kilo", "kilos", "kilogramo", "kilogramos"].includes(v)) return "KG";
+  // LT
+  if (["l", "lt", "lts", "litro", "litros", "lit"].includes(v)) return "LT";
+  // BOX
+  if (["box", "caja", "cajas", "bx"].includes(v)) return "BOX";
+  // PACK
+  if (["pack", "paquete", "paquetes", "pq", "pkg"].includes(v)) return "PACK";
+  // PIECE (default)
+  if (["pz", "pza", "pzas", "pieza", "piezas", "pcs", "unidad", "unidades", "u", "und"].includes(v)) return "PIECE";
+
+  // Si no reconoce, default
+  return "PIECE";
+}
+
 async function importInventory(
   batchId: string,
   businessId: string,
@@ -434,8 +459,11 @@ async function importInventory(
       const name = normString(row.nombre);
       if (!name) throw new Error("Nombre requerido");
 
-      const unit = normString(row.unidad);
-      if (!unit) throw new Error("Unidad requerida");
+      const unitRaw = normString(row.unidad);
+      if (!unitRaw) throw new Error("Unidad requerida");
+
+      // Normalizar unidad al enum StockUnit (PIECE | KG | LT | BOX | PACK)
+      const unit = normalizeStockUnit(unitRaw);
 
       const stock = parseInteger(row.stock) ?? 0;
       const minimo = parseInteger(row.minimo) ?? 0;
@@ -458,7 +486,7 @@ async function importInventory(
             lastPriceCents: price,
             category,
             supplierName: supplier,
-            unit,
+            unit: unit as any,
             importBatchId: batchId,
           },
         });
@@ -469,7 +497,7 @@ async function importInventory(
             name,
             sku,
             category,
-            unit,
+            unit: unit as any,
             onHandQty: stock,
             minQty: minimo,
             lastPriceCents: price,
