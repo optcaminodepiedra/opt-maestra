@@ -44,11 +44,11 @@ export default async function NewRequisitionPage({
   const sp = await searchParams;
   const isInventoryRole = ["MASTER_ADMIN", "OWNER", "SUPERIOR", "INVENTORY"].includes(role);
 
-  // Determinar negocios visibles
+  // ─── Determinar negocios visibles para el dropdown ───────────
+  // (Solo aplica para tipos RESTAURANT y SPECIAL_EVENT)
   let businesses: { id: string; name: string }[];
   if (isInventoryRole) {
     // Goyo + admins ven todos los negocios EXCEPTO Almacén General
-    // (porque Almacén General se asigna automáticamente a OWNER_HOUSE/VENDING_MACHINE)
     businesses = await prisma.business.findMany({
       where: { id: { not: ALMACEN_GENERAL_ID } },
       select: { id: true, name: true },
@@ -87,35 +87,30 @@ export default async function NewRequisitionPage({
     });
   }
 
-  // Determinar negocio seleccionado por defecto
   const selectedBusinessId =
     sp.businessId && businesses.some((b) => b.id === sp.businessId)
       ? sp.businessId
       : businesses[0]?.id ?? null;
 
-  // ─── CARGAR ITEMS DEL CATÁLOGO ────────────────────────────
-  // Si es Goyo o admin, cargamos del Almacén General (su catálogo)
-  // Si es gerente, cargamos del negocio seleccionado
-  const itemsBusinessId = isInventoryRole ? ALMACEN_GENERAL_ID : selectedBusinessId;
-
-  let items: any[] = [];
-  if (itemsBusinessId) {
-    items = await prisma.inventoryItem.findMany({
-      where: { businessId: itemsBusinessId, isActive: true },
-      select: {
-        id: true,
-        name: true,
-        sku: true,
-        category: true,
-        unit: true,
-        onHandQty: true,
-        minQty: true,
-        lastPriceCents: true,
-        supplierName: true,
-      },
-      orderBy: [{ category: "asc" }, { name: "asc" }],
-    });
-  }
+  // ─── CATÁLOGO UNIFICADO ──────────────────────────────────────
+  // SIEMPRE cargamos del Almacén General (Goyo lo administra)
+  // Esto permite que las gerentes pidan productos AUNQUE no haya stock,
+  // siempre que estén en el catálogo maestro.
+  const items = await prisma.inventoryItem.findMany({
+    where: { businessId: ALMACEN_GENERAL_ID, isActive: true },
+    select: {
+      id: true,
+      name: true,
+      sku: true,
+      category: true,
+      unit: true,
+      onHandQty: true,
+      minQty: true,
+      lastPriceCents: true,
+      supplierName: true,
+    },
+    orderBy: [{ category: "asc" }, { name: "asc" }],
+  });
 
   const validKinds = ["RESTAURANT", "SPECIAL_EVENT", "OWNER_HOUSE", "VENDING_MACHINE"];
   const initialKind = sp.kind && validKinds.includes(sp.kind) ? sp.kind : undefined;
@@ -134,7 +129,7 @@ export default async function NewRequisitionPage({
           Nueva requisición
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Solicita productos al almacén
+          Solicita productos del catálogo del almacén general
         </p>
       </div>
 

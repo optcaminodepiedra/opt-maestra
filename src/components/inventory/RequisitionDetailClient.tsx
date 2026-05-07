@@ -16,6 +16,8 @@ import {
   markRequisitionDelivered, confirmRequisitionReceipt,
 } from "@/lib/requisitions.actions";
 
+import { CancelRequisitionButton } from "@/components/inventory/CancelRequisitionButton";
+
 type Item = {
   id: string;
   itemName: string | null;     // del catálogo
@@ -62,6 +64,7 @@ type Props = {
   canApprove: boolean;
   canDeliver: boolean;
   canConfirmReceipt: boolean;
+  canCancel: boolean;
 };
 
 const STATUS_CONFIG: Record<string, { label: string; cls: string; icon: any }> = {
@@ -73,6 +76,7 @@ const STATUS_CONFIG: Record<string, { label: string; cls: string; icon: any }> =
   RECEIVED_PARTIAL: { label: "Entrega parcial", cls: "bg-orange-50 text-orange-700 border-orange-200", icon: AlertTriangle },
   RECEIVED:         { label: "Entregada",       cls: "bg-teal-50 text-teal-700 border-teal-200",    icon: PackageOpen },
   CLOSED:           { label: "Cerrada",         cls: "bg-gray-50 text-gray-600 border-gray-200",    icon: CheckCircle2 },
+  CANCELED:         { label: "Cancelada",       cls: "bg-gray-50 text-gray-500 border-gray-200",    icon: XCircle },
 };
 
 const KIND_CONFIG: Record<string, { label: string; icon: any; color: string }> = {
@@ -92,6 +96,7 @@ export function RequisitionDetailClient({
   canApprove,
   canDeliver,
   canConfirmReceipt,
+  canCancel,
 }: Props) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -233,11 +238,23 @@ export function RequisitionDetailClient({
                 </p>
               )}
             </div>
-            <Button variant="outline" size="sm" asChild>
-              <Link href={`/app/inventory/requisitions/${req.id}/print`} target="_blank">
-                <Printer className="w-4 h-4 mr-1.5" /> Imprimir
-              </Link>
-            </Button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button variant="outline" size="sm" asChild>
+                <Link href={`/app/inventory/requisitions/${req.id}/print`} target="_blank">
+                  <Printer className="w-4 h-4 mr-1.5" /> Imprimir
+                </Link>
+              </Button>
+              {canCancel && (
+                <CancelRequisitionButton
+                  requisitionId={req.id}
+                  requisitionTitle={req.title}
+                  variant="outline"
+                  size="sm"
+                  fullLabel
+                  redirectAfter
+                />
+              )}
+            </div>
           </div>
         </CardHeader>
         <CardContent>

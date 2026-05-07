@@ -28,15 +28,30 @@ export default async function RequisitionDetailPage({
   const req = await getRequisitionById(id);
   if (!req) notFound();
 
-  const canApprove = [...ADMIN_ROLES, ...INVENTORY_ROLES].includes(role);
-  const canDeliver = [...ADMIN_ROLES, ...INVENTORY_ROLES].includes(role);
-  const canConfirmReceipt =
-    req.createdBy.id === u.id || ADMIN_ROLES.includes(role);
+  const isAdmin = ADMIN_ROLES.includes(role);
+  const isInventory = INVENTORY_ROLES.includes(role);
+  const isOwner = req.createdBy.id === u.id;
 
-  // Determinar back link según rol
-  const backHref = INVENTORY_ROLES.includes(role) || ADMIN_ROLES.includes(role)
+  const canApprove = isAdmin || isInventory;
+  const canDeliver = isAdmin || isInventory;
+  const canConfirmReceipt = isOwner || isAdmin;
+
+  // ─── canCancel según reglas ──────────────────────────────
+  // - Admins/Goyo: cualquier estado salvo RECEIVED, RECEIVED_PARTIAL, CLOSED, CANCELED
+  // - Creador: solo en DRAFT/SUBMITTED
+  const finalStates = ["RECEIVED", "RECEIVED_PARTIAL", "CLOSED", "CANCELED"];
+  let canCancel = false;
+  if (!finalStates.includes(req.status)) {
+    if (isAdmin || isInventory) {
+      canCancel = true;
+    } else if (isOwner && ["DRAFT", "SUBMITTED"].includes(req.status)) {
+      canCancel = true;
+    }
+  }
+
+  const backHref = isInventory || isAdmin
     ? "/app/inventory"
-    : "/app/manager/ops/requisitions"; // fallback genérico
+    : "/app/manager/ops/requisitions";
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-4">
@@ -52,6 +67,7 @@ export default async function RequisitionDetailPage({
         canApprove={canApprove}
         canDeliver={canDeliver}
         canConfirmReceipt={canConfirmReceipt}
+        canCancel={canCancel}
         requisition={{
           id: req.id,
           title: req.title,

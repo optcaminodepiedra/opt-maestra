@@ -566,9 +566,10 @@ export function NewRequisitionWizard({
                 {items.length === 0 ? (
                   <div className="p-6 text-center text-sm text-muted-foreground">
                     <AlertTriangle className="w-6 h-6 mx-auto text-amber-500 mb-2" />
-                    Este negocio no tiene productos en el catálogo todavía.
+                    El catálogo del almacén general aún no tiene productos.
+                    <p className="text-xs mt-1">Pídele a Goyo que cargue el catálogo de productos.</p>
                     {kind.allowFreeText && (
-                      <p className="text-xs mt-1">Usa "Producto libre" para agregar items que no estén en el catálogo.</p>
+                      <p className="text-xs mt-1">Mientras tanto, puedes usar "Producto libre" para agregar items.</p>
                     )}
                   </div>
                 ) : filteredItems.length === 0 ? (
@@ -596,11 +597,31 @@ export function NewRequisitionWizard({
                                 <Badge variant="secondary" className="text-[9px]">{it.category}</Badge>
                               )}
                             </div>
-                            <p className="text-[10px] text-muted-foreground">
-                              Stock: {it.onHandQty} {it.unit.toLowerCase()}
-                              {it.lastPriceCents > 0 && ` · ${fmt(it.lastPriceCents)} c/u`}
-                              {it.supplierName && ` · ${it.supplierName}`}
-                            </p>
+                            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                              {it.onHandQty === 0 ? (
+                                <Badge variant="outline" className="text-[9px] bg-red-50 text-red-700 border-red-200">
+                                  Sin stock
+                                </Badge>
+                              ) : it.onHandQty < it.minQty ? (
+                                <Badge variant="outline" className="text-[9px] bg-amber-50 text-amber-700 border-amber-200">
+                                  Bajo: {it.onHandQty} {it.unit.toLowerCase()}
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-[9px] bg-green-50 text-green-700 border-green-200">
+                                  Stock: {it.onHandQty} {it.unit.toLowerCase()}
+                                </Badge>
+                              )}
+                              {it.lastPriceCents > 0 && (
+                                <span className="text-[10px] text-muted-foreground">
+                                  · {fmt(it.lastPriceCents)} c/u
+                                </span>
+                              )}
+                              {it.supplierName && (
+                                <span className="text-[10px] text-muted-foreground">
+                                  · {it.supplierName}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           {alreadyAdded ? (
                             <Badge variant="outline" className="text-[10px] bg-green-50 text-green-700 border-green-200 shrink-0">
@@ -651,9 +672,17 @@ export function NewRequisitionWizard({
                             <Badge variant="outline" className="text-[9px]">Catálogo</Badge>
                             {item.sku && <Badge variant="secondary" className="text-[9px]">{item.sku}</Badge>}
                           </div>
-                          <p className="text-[10px] text-muted-foreground mt-0.5">
-                            Stock actual: {item.onHandQty} {item.unit.toLowerCase()}
-                          </p>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            {item.onHandQty === 0 ? (
+                              <Badge variant="outline" className="text-[9px] bg-red-50 text-red-700 border-red-200">
+                                Sin stock — Goyo deberá comprarlo
+                              </Badge>
+                            ) : (
+                              <span className="text-[10px] text-muted-foreground">
+                                Stock disponible: {item.onHandQty} {item.unit.toLowerCase()}
+                              </span>
+                            )}
+                          </div>
                           <div className="grid grid-cols-3 gap-2 mt-2">
                             <div>
                               <label className="text-[9px] text-muted-foreground uppercase">Cantidad</label>

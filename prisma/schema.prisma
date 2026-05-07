@@ -521,6 +521,7 @@ enum RequisitionStatus {
   RECEIVED_PARTIAL
   RECEIVED
   CLOSED
+  CANCELED
 }
 
 model InventoryItem {

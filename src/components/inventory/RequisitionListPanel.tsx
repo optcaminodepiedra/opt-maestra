@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import {
   Package, AlertCircle, Clock, CheckCircle2, Truck, PackageOpen,
   Sparkles, Home, Coffee, UtensilsCrossed, Calendar, User as UserIcon,
-  AlertTriangle, ArrowRight,
+  AlertTriangle, ArrowRight, XCircle,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -38,6 +38,7 @@ const STATUS_CONFIG: Record<string, { label: string; cls: string; icon: any }> =
   RECEIVED_PARTIAL: { label: "Entrega parcial", cls: "bg-orange-50 text-orange-700 border-orange-200", icon: AlertTriangle },
   RECEIVED:         { label: "Entregada",       cls: "bg-teal-50 text-teal-700 border-teal-200",    icon: PackageOpen },
   CLOSED:           { label: "Cerrada",         cls: "bg-gray-50 text-gray-600 border-gray-200",    icon: CheckCircle2 },
+  CANCELED:         { label: "Cancelada",       cls: "bg-gray-50 text-gray-500 border-gray-200",    icon: XCircle },
 };
 
 const KIND_CONFIG: Record<string, { label: string; icon: any; color: string }> = {
@@ -75,6 +76,7 @@ export function RequisitionListPanel({ requisitions, showKindIcon = true }: Prop
     entregadas: requisitions.filter((r) => r.status === "RECEIVED"),
     cerradas: requisitions.filter((r) => r.status === "CLOSED"),
     rechazadas: requisitions.filter((r) => r.status === "REJECTED"),
+    canceladas: requisitions.filter((r) => r.status === "CANCELED"),
   };
 
   return (
@@ -146,6 +148,20 @@ export function RequisitionListPanel({ requisitions, showKindIcon = true }: Prop
           </CardContent>
         </Card>
       )}
+
+      {groups.canceladas.length > 0 && (
+        <Card className="opacity-60">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+              <XCircle className="w-4 h-4" />
+              Canceladas ({groups.canceladas.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <RequisitionRows rows={groups.canceladas.slice(0, 10)} showKindIcon={showKindIcon} compact strikethrough />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
@@ -154,10 +170,12 @@ function RequisitionRows({
   rows,
   showKindIcon,
   compact,
+  strikethrough,
 }: {
   rows: RequisitionRow[];
   showKindIcon: boolean;
   compact?: boolean;
+  strikethrough?: boolean;
 }) {
   return (
     <div className="divide-y">
@@ -193,7 +211,7 @@ function RequisitionRows({
                       🔒 Privada
                     </Badge>
                   )}
-                  <p className="text-sm font-medium truncate">{r.title}</p>
+                  <p className={`text-sm font-medium truncate ${strikethrough ? "line-through" : ""}`}>{r.title}</p>
                   {r.eventName && (
                     <span className="text-xs text-purple-700 font-medium">· {r.eventName}</span>
                   )}
