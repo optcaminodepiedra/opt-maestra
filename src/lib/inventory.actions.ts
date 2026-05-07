@@ -13,7 +13,6 @@ async function assertCanManageInventory(businessId: string) {
 
   if ([...GLOBAL_ROLES, ...INVENTORY_ROLES].includes(role)) return me;
 
-  // Manager: solo su negocio
   const isMyBusiness =
     (me as any).primaryBusinessId === businessId ||
     (me as any).businessId === businessId;
@@ -33,7 +32,6 @@ async function assertCanManageInventory(businessId: string) {
 
 /**
  * Stock con filtros (negocio, búsqueda, categoría).
- * Solo Goyo y admins ven el almacén general.
  */
 export async function getStockSummary(businessId: string) {
   await assertCanManageInventory(businessId);
@@ -43,7 +41,6 @@ export async function getStockSummary(businessId: string) {
     orderBy: [{ category: "asc" }, { name: "asc" }],
   });
 
-  // Estadísticas
   const totalItems = items.length;
   const belowMin = items.filter((i) => i.onHandQty < i.minQty).length;
   const outOfStock = items.filter((i) => i.onHandQty === 0).length;
@@ -52,7 +49,6 @@ export async function getStockSummary(businessId: string) {
     0
   );
 
-  // Lista de categorías únicas
   const categories = Array.from(
     new Set(items.map((i) => i.category).filter(Boolean) as string[])
   ).sort();
@@ -72,19 +68,13 @@ export async function getStockSummary(businessId: string) {
       belowMin: i.onHandQty < i.minQty,
       outOfStock: i.onHandQty === 0,
     })),
-    summary: {
-      totalItems,
-      belowMin,
-      outOfStock,
-      totalValueCents,
-    },
+    summary: { totalItems, belowMin, outOfStock, totalValueCents },
     categories,
   };
 }
 
 /**
  * Registra un movimiento manual (entrada/salida/ajuste).
- * Para SALIDA permite especificar un negocio destino opcional.
  */
 export async function createInventoryMovement(input: {
   itemId: string;
@@ -96,7 +86,6 @@ export async function createInventoryMovement(input: {
   const me = await getMe();
   if (input.qty <= 0) throw new Error("La cantidad debe ser mayor a 0.");
 
-  // Cargar el item para saber a qué businessId pertenece
   const item = await prisma.inventoryItem.findUnique({
     where: { id: input.itemId },
     select: { id: true, businessId: true, name: true, onHandQty: true },
@@ -105,21 +94,18 @@ export async function createInventoryMovement(input: {
 
   await assertCanManageInventory(item.businessId);
 
-  // Para SALIDA y AJUSTE-negativo validar que haya stock
   if (input.type === "OUT" && input.qty > item.onHandQty) {
     throw new Error(
       `Stock insuficiente. Hay ${item.onHandQty}, intentas sacar ${input.qty}.`
     );
   }
 
-  // Calcular delta para actualizar stock
   let delta = 0;
   if (input.type === "IN") delta = input.qty;
   else if (input.type === "OUT") delta = -input.qty;
-  else if (input.type === "ADJUST") delta = input.qty; // qty puede ser negativa o positiva (lo manejamos asi)
+  else if (input.type === "ADJUST") delta = input.qty;
   else if (input.type === "TRANSFER") delta = -input.qty;
 
-  // Construir el create con destinationBusinessId si aplica
   const moveData: any = {
     businessId: item.businessId,
     itemId: item.id,
@@ -129,7 +115,6 @@ export async function createInventoryMovement(input: {
     createdById: (me as any).id,
   };
 
-  // Solo OUT y TRANSFER aceptan destinationBusinessId
   if (
     (input.type === "OUT" || input.type === "TRANSFER") &&
     input.destinationBusinessId
@@ -174,7 +159,6 @@ export async function listInventoryMovements(opts: {
     take: opts.limit ?? 100,
   });
 
-  // Si Prisma todavía no reconoce destinationBusiness, lo cargamos manualmente
   const destBizIds = Array.from(
     new Set(
       (moves as any[])
@@ -217,4 +201,92 @@ export async function getDestinationBusinesses(excludeBusinessId: string) {
     select: { id: true, name: true },
     orderBy: { name: "asc" },
   });
+}
+
+/**
+ * Crea un nuevo producto en el catálogo de inventario de un negocio.
+ */
+export async function createInventoryItem(input: {
+  businessId: string;
+  name: string;
+  sku?: string;
+  category?: string;
+  unit?: "PIECE" | "KG" | "LT" | "BOX" | "PACK";
+  onHandQty?: number;
+  minQty?: number;
+  lastPriceCents?: number;
+  supplierName?: string;
+}) {
+  await assertCanManageInventory(input.businessId);
+
+  if (!input.name?.trim()) throw new Error("Falta el nombre del producto.");
+
+  // Verificar duplicado por SKU si se proporciona
+  if (input.sku?.trim()) {
+    const exists = await prisma.inventoryItem.findFirst({
+      where: { businessId: input.businessId, sku: input.sku.trim() },
+      select: { id: true },
+    });
+    if (exists) throw new Error(`Ya existe un producto con SKU "${input.sku}".`);
+  }
+
+  const created = await prisma.inventoryItem.create({
+    data: {
+      businessId: input.businessId,
+      name: input.name.trim(),
+      sku: input.sku?.trim() || null,
+      category: input.category?.trim() || null,
+      unit: input.unit ?? "PIECE",
+      onHandQty: input.onHandQty ?? 0,
+      minQty: input.minQty ?? 0,
+      lastPriceCents: input.lastPriceCents ?? 0,
+      supplierName: input.supplierName?.trim() || null,
+      isActive: true,
+    },
+    select: { id: true, name: true },
+  });
+
+  revalidatePath("/app/inventory/stock");
+  revalidatePath("/app/inventory");
+  return { ok: true, id: created.id, name: created.name };
+}
+
+/**
+ * Actualiza un producto existente.
+ */
+export async function updateInventoryItem(input: {
+  id: string;
+  name?: string;
+  sku?: string | null;
+  category?: string | null;
+  unit?: "PIECE" | "KG" | "LT" | "BOX" | "PACK";
+  minQty?: number;
+  lastPriceCents?: number;
+  supplierName?: string | null;
+  isActive?: boolean;
+}) {
+  const item = await prisma.inventoryItem.findUnique({
+    where: { id: input.id },
+    select: { businessId: true },
+  });
+  if (!item) throw new Error("Producto no encontrado.");
+  await assertCanManageInventory(item.businessId);
+
+  await prisma.inventoryItem.update({
+    where: { id: input.id },
+    data: {
+      ...(input.name !== undefined && { name: input.name.trim() }),
+      ...(input.sku !== undefined && { sku: input.sku?.trim() || null }),
+      ...(input.category !== undefined && { category: input.category?.trim() || null }),
+      ...(input.unit !== undefined && { unit: input.unit }),
+      ...(input.minQty !== undefined && { minQty: input.minQty }),
+      ...(input.lastPriceCents !== undefined && { lastPriceCents: input.lastPriceCents }),
+      ...(input.supplierName !== undefined && { supplierName: input.supplierName?.trim() || null }),
+      ...(input.isActive !== undefined && { isActive: input.isActive }),
+    },
+  });
+
+  revalidatePath("/app/inventory/stock");
+  revalidatePath("/app/inventory");
+  return { ok: true };
 }
