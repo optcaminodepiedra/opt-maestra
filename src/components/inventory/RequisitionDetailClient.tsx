@@ -8,7 +8,7 @@ import {
   Package, Check, X, AlertCircle, Truck, Clock, CheckCircle2,
   PackageOpen, AlertTriangle, FileText, Printer, Edit2,
   Sparkles, Home, Coffee, UtensilsCrossed, User as UserIcon,
-  Calendar, Building2, MessageSquare,
+  Calendar, Building2, MessageSquare, XCircle,
 } from "lucide-react";
 import Link from "next/link";
 import {
