@@ -22,6 +22,8 @@ import {
 } from "@/lib/schedule";
 import { getFoodServicePax } from "@/lib/food-service";
 import { resolveManagerScope } from "@/lib/manager-scope";
+import { RequisitionTrackingPanel } from "@/components/manager/RequisitionTrackingPanel";
+import { loadMyRequisitions } from "@/lib/manager-requisitions";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +72,7 @@ export default async function ManagerRanchDashboard() {
     occupiedRooms, totalRooms, roomsDirty, todayCheckIns, todayCheckOuts,
     pendingRequisitions, staffOnShift, cashpoints, invItems,
     rancherActivities,
+    myRequisitions,
   ] = await Promise.all([
     prisma.sale.aggregate({
       where: { ...whereByBiz, createdAt: { gte: todayLocal } },
@@ -139,6 +142,7 @@ export default async function ManagerRanchDashboard() {
     prisma.task.count({
       where: { ...whereByBiz, type: "ACTIVITY", status: { in: ["TODO", "DOING"] } },
     }),
+    loadMyRequisitions(scope.userId, 15),
   ]);
 
   const salesToday = salesTodayAgg._sum.amountCents ?? 0;
@@ -415,6 +419,12 @@ export default async function ManagerRanchDashboard() {
               )}
             </CardContent>
           </Card>
+
+          <RequisitionTrackingPanel
+            requisitions={myRequisitions}
+            primaryBusinessId={business.id}
+            managerBasePath="/app/manager/ranch"
+          />
 
           <Card>
             <CardHeader className="pb-2">

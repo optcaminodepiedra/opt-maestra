@@ -19,6 +19,8 @@ import {
 } from "@/lib/schedule";
 import { getFoodServicePax } from "@/lib/food-service";
 import { resolveManagerScope } from "@/lib/manager-scope";
+import { RequisitionTrackingPanel } from "@/components/manager/RequisitionTrackingPanel";
+import { loadMyRequisitions } from "@/lib/manager-requisitions";
 
 export const dynamic = "force-dynamic";
 
@@ -64,6 +66,7 @@ export default async function ManagerOpsDashboard() {
     occupiedRooms, totalRooms, roomsDirty, roomsMaintenance,
     todayCheckIns, todayCheckOuts, pendingRequisitions,
     staffOnShift, cashpoints, invItems, salesByBusiness,
+    myRequisitions,
   ] = await Promise.all([
     prisma.sale.aggregate({ where: { ...whereByBiz, createdAt: { gte: todayLocal } }, _sum: { amountCents: true }, _count: true }),
     prisma.sale.aggregate({ where: { ...whereByBiz, createdAt: { gte: startOfMonth } }, _sum: { amountCents: true } }),
@@ -87,6 +90,7 @@ export default async function ManagerOpsDashboard() {
     businessIds.length > 1
       ? prisma.sale.groupBy({ by: ["businessId"], where: { ...whereByBiz, createdAt: { gte: todayLocal } }, _sum: { amountCents: true }, _count: true })
       : Promise.resolve([]),
+    loadMyRequisitions(scope.userId, 15),
   ]);
 
   const salesToday = salesTodayAgg._sum.amountCents ?? 0;
@@ -283,6 +287,12 @@ export default async function ManagerOpsDashboard() {
               )}
             </CardContent>
           </Card>
+
+          <RequisitionTrackingPanel
+            requisitions={myRequisitions}
+            primaryBusinessId={businesses[0]?.id ?? ""}
+            managerBasePath="/app/manager/ops"
+          />
 
           {lowStockItems.length > 0 && (
             <Card>

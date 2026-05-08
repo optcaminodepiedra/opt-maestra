@@ -16,6 +16,8 @@ import { WithdrawalActions } from "@/components/manager/WithdrawalActions";
 import { FoodServicePanel } from "@/components/manager/FoodServicePanel";
 import { getShiftsForDay, getCandidateUsersForBusiness, isoDate, dateOnly } from "@/lib/schedule";
 import { getFoodServicePax } from "@/lib/food-service";
+import { RequisitionTrackingPanel } from "@/components/manager/RequisitionTrackingPanel";
+import { loadMyRequisitions } from "@/lib/manager-requisitions";
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +63,7 @@ export default async function RestaurantManagerDashboard() {
     pendingPettyWithdrawals, pendingLargeWithdrawals,
     activeOrders, totalTables, occupiedTablesRaw,
     staffOnShift, pendingRequisitions, cashpoints, invItems,
+    myRequisitions,
   ] = await Promise.all([
     prisma.sale.aggregate({ where: { ...whereByBiz, createdAt: { gte: todayLocal } }, _sum: { amountCents: true }, _count: true }),
     prisma.sale.aggregate({ where: { ...whereByBiz, createdAt: { gte: startOfMonth } }, _sum: { amountCents: true } }),
@@ -79,6 +82,7 @@ export default async function RestaurantManagerDashboard() {
     prisma.requisition.count({ where: { ...whereByBiz, status: { in: ["DRAFT", "SUBMITTED", "APPROVED", "ORDERED"] } } }),
     prisma.cashpoint.findMany({ where: { businessId }, select: { id: true, name: true, businessId: true }, orderBy: { name: "asc" } }),
     prisma.inventoryItem.findMany({ where: { ...whereByBiz, isActive: true }, select: { id: true, name: true, onHandQty: true, minQty: true, businessId: true } }),
+    loadMyRequisitions(u.id ?? "", 15),
   ]);
 
   const salesToday = salesTodayAgg._sum.amountCents ?? 0;
@@ -245,6 +249,12 @@ export default async function RestaurantManagerDashboard() {
               )}
             </CardContent>
           </Card>
+
+          <RequisitionTrackingPanel
+            requisitions={myRequisitions}
+            primaryBusinessId={business.id}
+            managerBasePath="/app/manager/restaurant"
+          />
 
           {lowStockItems.length > 0 && (
             <Card>
