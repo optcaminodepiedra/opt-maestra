@@ -76,6 +76,9 @@ export async function runImport(
       case "GUESTS":
         result = await importGuests(batch.id, rows);
         break;
+      case "MENU_ITEMS":
+        result = await importMenuItems(batch.id, businessId!, rows);
+        break;
       default:
         throw new Error("Tipo de importación no soportado.");
     }
@@ -725,4 +728,87 @@ export async function getImportBatches(limit = 50) {
     take: limit,
   });
   return batches;
+}
+
+// ─── importMenuItems ──────────────────────────────────────────────
+//
+// Importa productos del menú del restaurante (cafes, comidas, bebidas).
+// Plantilla esperada:
+//   clave (opcional)  — código del producto. Si se repite, actualiza.
+//   nombre            — REQUERIDO
+//   categoria         — REQUERIDO (e.g. "CAFE", "ENTRADAS", "POSTRES")
+//   precio            — precio en pesos (e.g. "50.00")
+//   iva               — opcional, no se usa por ahora (informativo)
+//   unidad            — opcional, informativo
+//   activo            — opcional ("SI"/"NO", default SI)
+
+async function importMenuItems(
+  batchId: string,
+  businessId: string,
+  rows: Record<string, any>[]
+): Promise<ImportResult> {
+  let success = 0;
+  const errors: ImportError[] = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const rowNum = i + 2; // +2 porque la fila 1 es el header
+    try {
+      const name = normString(row.nombre);
+      if (!name) throw new Error("Nombre requerido");
+
+      const category = normString(row.categoria);
+      if (!category) throw new Error("Categoría requerida");
+
+      const priceCents = parseMoneyCents(row.precio) ?? 0;
+      const clave = normString(row.clave) || null;
+      const activoRaw = normString(row.activo)?.toUpperCase();
+      const isActive = activoRaw === "NO" || activoRaw === "FALSE" ? false : true;
+
+      // Buscar duplicado: primero por clave si existe, después por nombre+businessId
+      let existing = null;
+      if (clave) {
+        // No hay campo "code/sku" en MenuItem, así que usamos name como clave única
+        existing = await prisma.menuItem.findFirst({
+          where: { businessId, name },
+        });
+      } else {
+        existing = await prisma.menuItem.findFirst({
+          where: { businessId, name },
+        });
+      }
+
+      if (existing) {
+        // Actualizar
+        await prisma.menuItem.update({
+          where: { id: existing.id },
+          data: {
+            category,
+            priceCents,
+            isActive,
+          },
+        });
+      } else {
+        // Crear
+        await prisma.menuItem.create({
+          data: {
+            businessId,
+            name,
+            category,
+            priceCents,
+            isActive,
+          },
+        });
+      }
+      success++;
+    } catch (err: any) {
+      errors.push({
+        row: rowNum,
+        data: row,
+        error: err.message,
+      });
+    }
+  }
+
+  return { total: rows.length, success, errors };
 }

@@ -1063,6 +1063,7 @@ enum ImportEntityType {
   GUESTS
   INVENTORY_ITEMS
   EMPLOYEES
+  MENU_ITEMS
 }
 
 enum ImportBatchStatus {

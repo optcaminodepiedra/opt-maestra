@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Upload, Download, FileSpreadsheet, CheckCircle2, XCircle, ArrowRight,
   ArrowLeft, AlertCircle, Loader2, FileText, Building2, Database,
-  DollarSign, TrendingDown, Wallet, BedDouble, Users, Package,
+  DollarSign, TrendingDown, Wallet, BedDouble, Users, Package, UtensilsCrossed,
 } from "lucide-react";
 import { listTemplates, type ImportEntityType, type TemplateDefinition } from "@/lib/import-templates";
 import { runImport, type ImportResult } from "@/lib/import.actions";
@@ -21,7 +21,7 @@ type Props = {
 type Step = "type" | "business" | "upload" | "preview" | "result";
 
 const ICON_MAP: Record<string, any> = {
-  DollarSign, TrendingDown, Wallet, BedDouble, Users, Package, FileText,
+  DollarSign, TrendingDown, Wallet, BedDouble, Users, Package, FileText, UtensilsCrossed,
 };
 
 export function ImportWizard({ businesses }: Props) {

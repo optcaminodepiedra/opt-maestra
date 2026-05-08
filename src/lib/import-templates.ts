@@ -7,7 +7,8 @@ export type ImportEntityType =
   | "HOTEL_RESERVATIONS"
   | "GUESTS"
   | "INVENTORY_ITEMS"
-  | "EMPLOYEES";
+  | "EMPLOYEES"
+  | "MENU_ITEMS";
 
 export type TemplateColumn = {
   key: string;           // nombre en el CSV/Excel
@@ -280,6 +281,46 @@ export const TEMPLATE_EMPLOYEES: TemplateDefinition = {
   ],
 };
 
+
+/* ═══════════════════════════ MENÚ ═══════════════════════════ */
+
+export const TEMPLATE_MENU_ITEMS: TemplateDefinition = {
+  entityType: "MENU_ITEMS",
+  label: "Productos del menú",
+  description: "Carga productos del menú del restaurante (cafés, comidas, bebidas)",
+  icon: "UtensilsCrossed",
+  needsBusiness: true,
+  columns: [
+    { key: "nombre",    label: "Nombre",    required: true,  type: "text",
+      description: "Nombre del producto",
+      example: "Café Americano" },
+    { key: "categoria", label: "Categoría", required: true,  type: "text",
+      description: "Categoría del producto (CAFE, ENTRADAS, POSTRES, etc.)",
+      example: "CAFE" },
+    { key: "precio",    label: "Precio",    required: true,  type: "money",
+      description: "Precio de venta en pesos",
+      example: 50.00 },
+    { key: "clave",     label: "Clave",     required: false, type: "text",
+      description: "Código del producto (opcional, para referencia)",
+      example: "0102" },
+    { key: "iva",       label: "IVA %",     required: false, type: "number",
+      description: "Porcentaje de IVA aplicable (informativo)",
+      example: 16 },
+    { key: "unidad",    label: "Unidad",    required: false, type: "text",
+      description: "Unidad de venta (PZA, KG, LT) — informativo",
+      example: "PZA" },
+    { key: "activo",    label: "Activo",    required: false, type: "boolean",
+      description: "SI/NO. Si se omite, se considera activo",
+      example: "SI" },
+  ],
+  exampleRows: [
+    { nombre: "Café Americano",      categoria: "CAFE",     precio: 35.00,  clave: "0106", iva: 16, unidad: "PZA", activo: "SI" },
+    { nombre: "Café Latte",          categoria: "CAFE",     precio: 50.00,  clave: "0102", iva: 0,  unidad: "PZA", activo: "SI" },
+    { nombre: "Hamburguesa Clásica", categoria: "GRILL",    precio: 180.00, clave: "2001", iva: 16, unidad: "PZA", activo: "SI" },
+    { nombre: "Cheesecake",          categoria: "POSTRES",  precio: 95.00,  clave: "1501", iva: 16, unidad: "PZA", activo: "SI" },
+  ],
+};
+
 /* ═══════════════════════════ REGISTRY ═══════════════════════════ */
 
 export const TEMPLATES: Record<ImportEntityType, TemplateDefinition> = {
@@ -290,6 +331,7 @@ export const TEMPLATES: Record<ImportEntityType, TemplateDefinition> = {
   GUESTS: TEMPLATE_GUESTS,
   INVENTORY_ITEMS: TEMPLATE_INVENTORY,
   EMPLOYEES: TEMPLATE_EMPLOYEES,
+  MENU_ITEMS: TEMPLATE_MENU_ITEMS,
 };
 
 export function getTemplate(entityType: ImportEntityType): TemplateDefinition {
