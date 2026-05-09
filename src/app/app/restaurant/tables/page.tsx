@@ -3,12 +3,15 @@ import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { UtensilsCrossed } from "lucide-react";
+import { UtensilsCrossed, ShieldAlert } from "lucide-react";
 import {
   getRestaurantLayout,
   getMeserosForBusiness,
 } from "@/lib/restaurant-tables.actions";
-import { resolveRestaurantBusinessId, listRestaurantOptions } from "@/lib/restaurant-resolve";
+import {
+  resolveRestaurantBusinessId,
+  listRestaurantOptions,
+} from "@/lib/restaurant-resolve";
 import { TablesView } from "@/components/restaurant/TablesView";
 import { RestaurantSelector } from "@/components/restaurant/RestaurantSelector";
 
@@ -20,7 +23,7 @@ const ALLOWED_ROLES = [
   "MANAGER_OPS", "MANAGER_RESTAURANT", "MANAGER_RANCH", "MANAGER",
   "STAFF_WAITER", "STAFF_BAR", "STAFF_CASHIER",
 ];
-const MANAGE_ROLES = ["MASTER_ADMIN", "OWNER", "SUPERIOR", "MANAGER_OPS", "MANAGER_RESTAURANT"];
+const MANAGE_ROLES = ["MASTER_ADMIN", "OWNER", "SUPERIOR", "MANAGER_OPS", "MANAGER_RESTAURANT", "MANAGER_RANCH"];
 
 export default async function TablesPage({
   searchParams,
@@ -32,6 +35,7 @@ export default async function TablesPage({
 
   const me = session.user as { id?: string; role?: string; primaryBusinessId?: string | null };
   const role = me.role as string;
+  const userId = me.id ?? "";
 
   if (!ALLOWED_ROLES.includes(role)) {
     return (
@@ -48,19 +52,41 @@ export default async function TablesPage({
 
   const sp = await searchParams;
 
-  // Nueva lógica: prioridad query → user.primary (si tiene mesas) → negocio con más mesas
+  // Resolver el negocio respetando permisos
   const businessId = await resolveRestaurantBusinessId({
     queryBusinessId: sp.businessId,
+    userId,
+    userRole: role,
     userPrimaryBusinessId: me.primaryBusinessId,
   });
+
+  // Si pidió un negocio específico y no tiene acceso → 403
+  if (sp.businessId && !businessId) {
+    return (
+      <div className="p-6 max-w-xl mx-auto">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ShieldAlert className="w-5 h-5 text-red-500" /> Sin acceso
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            No tienes acceso al restaurante solicitado. Contacta a un administrador
+            si necesitas permisos.
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (!businessId) {
     return (
       <div className="p-6 max-w-xl mx-auto">
         <Card>
-          <CardHeader><CardTitle>Sin restaurante configurado</CardTitle></CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
-            No hay restaurantes con mesas. Pide a un administrador que configure las mesas.
+          <CardHeader><CardTitle>Sin restaurante asignado</CardTitle></CardHeader>
+          <CardContent className="text-sm text-muted-foreground space-y-2">
+            <p>No tienes acceso a ningún restaurante con mesas configuradas.</p>
+            <p>Contacta al administrador para que te asigne acceso.</p>
           </CardContent>
         </Card>
       </div>
@@ -84,7 +110,7 @@ export default async function TablesPage({
   const [layout, meseros, options] = await Promise.all([
     getRestaurantLayout(businessId),
     getMeserosForBusiness(businessId),
-    listRestaurantOptions(),
+    listRestaurantOptions(userId, role),
   ]);
 
   return (

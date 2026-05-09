@@ -4,16 +4,19 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Settings, ArrowLeft } from "lucide-react";
+import { Settings, ArrowLeft, ShieldAlert } from "lucide-react";
 import Link from "next/link";
 import { getRestaurantLayout } from "@/lib/restaurant-tables.actions";
-import { resolveRestaurantBusinessId, listRestaurantOptions } from "@/lib/restaurant-resolve";
+import {
+  resolveRestaurantBusinessId,
+  listRestaurantOptions,
+} from "@/lib/restaurant-resolve";
 import { TableEditor } from "@/components/restaurant/TableEditor";
 import { RestaurantSelector } from "@/components/restaurant/RestaurantSelector";
 
 export const dynamic = "force-dynamic";
 
-const MANAGE_ROLES = ["MASTER_ADMIN", "OWNER", "SUPERIOR", "MANAGER_OPS", "MANAGER_RESTAURANT"];
+const MANAGE_ROLES = ["MASTER_ADMIN", "OWNER", "SUPERIOR", "MANAGER_OPS", "MANAGER_RESTAURANT", "MANAGER_RANCH"];
 
 export default async function ManageTablesPage({
   searchParams,
@@ -25,6 +28,7 @@ export default async function ManageTablesPage({
 
   const me = session.user as { id?: string; role?: string; primaryBusinessId?: string | null };
   const role = me.role as string;
+  const userId = me.id ?? "";
 
   if (!MANAGE_ROLES.includes(role)) {
     return (
@@ -43,8 +47,27 @@ export default async function ManageTablesPage({
 
   const businessId = await resolveRestaurantBusinessId({
     queryBusinessId: sp.businessId,
+    userId,
+    userRole: role,
     userPrimaryBusinessId: me.primaryBusinessId,
   });
+
+  if (sp.businessId && !businessId) {
+    return (
+      <div className="p-6 max-w-xl mx-auto">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ShieldAlert className="w-5 h-5 text-red-500" /> Sin acceso
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            No tienes permisos para editar este restaurante.
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (!businessId) {
     return (
@@ -52,7 +75,7 @@ export default async function ManageTablesPage({
         <Card>
           <CardHeader><CardTitle>Sin restaurante</CardTitle></CardHeader>
           <CardContent className="text-sm text-muted-foreground">
-            No hay restaurantes configurados.
+            No tienes acceso a ningún restaurante.
           </CardContent>
         </Card>
       </div>
@@ -67,7 +90,7 @@ export default async function ManageTablesPage({
 
   const [layout, options] = await Promise.all([
     getRestaurantLayout(businessId),
-    listRestaurantOptions(),
+    listRestaurantOptions(userId, role),
   ]);
 
   return (

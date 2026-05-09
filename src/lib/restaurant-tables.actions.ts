@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { getMe } from "@/lib/session";
 import { revalidatePath } from "next/cache";
+import { userCanAccessBusiness } from "@/lib/restaurant-resolve";
 
 const CONFIG_ROLES = ["MASTER_ADMIN", "OWNER", "SUPERIOR", "MANAGER_OPS", "MANAGER_RESTAURANT"];
 
@@ -12,15 +13,21 @@ async function assertCanManageRestaurant(businessId: string) {
   if (!CONFIG_ROLES.includes(role)) {
     throw new Error("No tienes permisos para administrar mesas.");
   }
-  // Validar que el usuario tiene acceso a este negocio
-  if (!["MASTER_ADMIN", "OWNER"].includes(role)) {
-    const access = await prisma.userBusinessAccess.findFirst({
-      where: { userId: (me as any).id, businessId },
-    });
-    if (!access && (me as any).primaryBusinessId !== businessId) {
-      throw new Error("No tienes acceso a este negocio.");
-    }
-  }
+  // Validar acceso al negocio (usa helper centralizado)
+  const ok = await userCanAccessBusiness((me as any).id, role, businessId);
+  if (!ok) throw new Error("No tienes acceso a este negocio.");
+  return me;
+}
+
+/**
+ * Valida que el usuario actual tiene acceso al negocio.
+ * Usado en operaciones de venta (no admin).
+ */
+async function assertCanOperate(businessId: string) {
+  const me = await getMe();
+  const role = (me as any).role as string;
+  const ok = await userCanAccessBusiness((me as any).id, role, businessId);
+  if (!ok) throw new Error("No tienes acceso a este negocio.");
   return me;
 }
 
@@ -29,6 +36,9 @@ async function assertCanManageRestaurant(businessId: string) {
  * ════════════════════════════════════════════════════════════════ */
 
 export async function getRestaurantLayout(businessId: string) {
+  // Verificar acceso del usuario actual
+  await assertCanOperate(businessId);
+
   const [tables, areasRaw] = await Promise.all([
     prisma.restaurantTable.findMany({
       where: { businessId, isActive: true },
@@ -440,6 +450,9 @@ export async function openOrderAtTable(input: {
   if (!table) throw new Error("Mesa no encontrada");
   if (!table.isActive) throw new Error("Mesa inactiva");
 
+  // Verificar que el usuario tiene acceso al negocio de esta mesa
+  await assertCanOperate(table.businessId);
+
   const existing = await prisma.restaurantOrder.findFirst({
     where: { tableId: table.id, status: { in: ["OPEN", "SENT"] } },
   });
@@ -466,6 +479,9 @@ export async function openOrderAtTable(input: {
 }
 
 export async function getMeserosForBusiness(businessId: string) {
+  // Solo verificar acceso si no es admin (admins pueden ver meseros de cualquier negocio)
+  await assertCanOperate(businessId);
+
   const users = await prisma.user.findMany({
     where: {
       isActive: true,
@@ -495,6 +511,7 @@ export async function discardEmptyOrder(orderId: string) {
     include: { _count: { select: { items: true } } },
   });
   if (!order) throw new Error("Orden no encontrada");
+  await assertCanOperate(order.businessId);
   if (order._count.items > 0) {
     throw new Error("No se puede descartar una orden con productos.");
   }
@@ -513,6 +530,7 @@ export async function moveOrderToTable(input: { orderId: string; newTableId: str
   if (!["OPEN", "SENT"].includes(order.status)) {
     throw new Error("Solo se pueden mover órdenes abiertas");
   }
+  await assertCanOperate(order.businessId);
 
   const newTable = await prisma.restaurantTable.findUnique({
     where: { id: input.newTableId },
