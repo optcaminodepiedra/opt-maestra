@@ -4,10 +4,12 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Settings, ArrowLeft, UtensilsCrossed } from "lucide-react";
+import { Settings, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { getRestaurantLayout } from "@/lib/restaurant-tables.actions";
+import { resolveRestaurantBusinessId, listRestaurantOptions } from "@/lib/restaurant-resolve";
 import { TableEditor } from "@/components/restaurant/TableEditor";
+import { RestaurantSelector } from "@/components/restaurant/RestaurantSelector";
 
 export const dynamic = "force-dynamic";
 
@@ -38,15 +40,11 @@ export default async function ManageTablesPage({
   }
 
   const sp = await searchParams;
-  let businessId = sp.businessId ?? me.primaryBusinessId ?? null;
 
-  if (!businessId) {
-    const first = await prisma.restaurantTable.findFirst({
-      where: { isActive: true },
-      select: { businessId: true },
-    });
-    businessId = first?.businessId ?? null;
-  }
+  const businessId = await resolveRestaurantBusinessId({
+    queryBusinessId: sp.businessId,
+    userPrimaryBusinessId: me.primaryBusinessId,
+  });
 
   if (!businessId) {
     return (
@@ -67,7 +65,10 @@ export default async function ManageTablesPage({
   });
   if (!business) redirect("/app");
 
-  const layout = await getRestaurantLayout(businessId);
+  const [layout, options] = await Promise.all([
+    getRestaurantLayout(businessId),
+    listRestaurantOptions(),
+  ]);
 
   return (
     <div className="p-3 md:p-6 max-w-7xl mx-auto space-y-4 pb-24 md:pb-6">
@@ -79,14 +80,18 @@ export default async function ManageTablesPage({
         </Button>
       </div>
 
-      <div>
-        <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-2">
-          <Settings className="w-6 h-6 text-blue-500" />
-          Editor de mapa de mesas
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          {business.name} · Arrastra mesas y áreas para reorganizar. Click para seleccionar.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-2">
+            <Settings className="w-6 h-6 text-blue-500" />
+            Editor de mapa de mesas
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {business.name} · Arrastra mesas y áreas para reorganizar.
+          </p>
+        </div>
+
+        <RestaurantSelector current={businessId} options={options} />
       </div>
 
       <TableEditor

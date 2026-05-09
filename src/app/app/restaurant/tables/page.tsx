@@ -8,7 +8,9 @@ import {
   getRestaurantLayout,
   getMeserosForBusiness,
 } from "@/lib/restaurant-tables.actions";
+import { resolveRestaurantBusinessId, listRestaurantOptions } from "@/lib/restaurant-resolve";
 import { TablesView } from "@/components/restaurant/TablesView";
+import { RestaurantSelector } from "@/components/restaurant/RestaurantSelector";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -46,27 +48,11 @@ export default async function TablesPage({
 
   const sp = await searchParams;
 
-  // Determinar negocio: query > primaryBusinessId > primer negocio con mesas
-  let businessId = sp.businessId ?? null;
-
-  if (!businessId) {
-    // Si el usuario tiene un negocio asignado, intentar usarlo
-    if (me.primaryBusinessId) {
-      const has = await prisma.restaurantTable.findFirst({
-        where: { businessId: me.primaryBusinessId, isActive: true },
-      });
-      if (has) businessId = me.primaryBusinessId;
-    }
-    // Si aún no, buscar primer negocio con mesas
-    if (!businessId) {
-      const first = await prisma.restaurantTable.findFirst({
-        where: { isActive: true },
-        select: { businessId: true },
-        orderBy: { createdAt: "asc" },
-      });
-      businessId = first?.businessId ?? null;
-    }
-  }
+  // Nueva lógica: prioridad query → user.primary (si tiene mesas) → negocio con más mesas
+  const businessId = await resolveRestaurantBusinessId({
+    queryBusinessId: sp.businessId,
+    userPrimaryBusinessId: me.primaryBusinessId,
+  });
 
   if (!businessId) {
     return (
@@ -95,21 +81,24 @@ export default async function TablesPage({
     );
   }
 
-  const [layout, meseros] = await Promise.all([
+  const [layout, meseros, options] = await Promise.all([
     getRestaurantLayout(businessId),
     getMeserosForBusiness(businessId),
+    listRestaurantOptions(),
   ]);
 
   return (
     <div className="p-3 md:p-6 max-w-7xl mx-auto space-y-4 pb-24 md:pb-6">
-      <div>
-        <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-2">
-          <UtensilsCrossed className="w-7 h-7 text-orange-500" />
-          Mesas
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          {business.name}
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-2">
+            <UtensilsCrossed className="w-7 h-7 text-orange-500" />
+            Mesas
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">{business.name}</p>
+        </div>
+
+        <RestaurantSelector current={businessId} options={options} />
       </div>
 
       <TablesView
