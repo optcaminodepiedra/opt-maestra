@@ -70,6 +70,7 @@ model Business {
   restaurantTables RestaurantTable[] @relation("BusinessRestaurantTables")
   menuItems        MenuItem[]        @relation("BusinessMenuItems")
   restaurantOrders RestaurantOrder[] @relation("BusinessRestaurantOrders")
+  restaurantAreas RestaurantArea[] @relation("BusinessRestaurantAreas")
 
   inventoryItems InventoryItem[]
 inventoryMovesOrigin       InventoryMovement[] @relation("InventoryMovementOrigin")
@@ -407,6 +408,13 @@ enum KitchenStatus {
   CANCELED
 }
 
+enum TableShape {
+  SQUARE
+  ROUND
+  RECTANGLE
+  BAR
+}
+
 model RestaurantTable {
   id         String  @id @default(cuid())
   businessId String
@@ -421,6 +429,12 @@ model RestaurantTable {
   posX      Int?
   posY      Int?
   sortOrder Int     @default(0)
+
+  // ── NUEVO: forma y dimensiones para el editor visual ──
+  shape    TableShape @default(SQUARE)
+  width    Int        @default(80)   // en pixels (canvas)
+  height   Int        @default(80)
+  rotation Int        @default(0)    // 0, 90, 180, 270
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1202,4 +1216,26 @@ model Notification {
   @@index([userId, isRead])
   @@index([targetRole, isRead])
   @@index([createdAt])
+}
+
+model RestaurantArea {
+  id         String  @id @default(cuid())
+  businessId String
+
+  name       String
+  posX       Int     @default(0)
+  posY       Int     @default(0)
+  width      Int     @default(400)
+  height     Int     @default(300)
+  color      String  @default("#f1f5f9") // bg-slate-100
+  showBorder Boolean @default(true)
+  sortOrder  Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business Business @relation("BusinessRestaurantAreas", fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, name])
+  @@index([businessId])
 }

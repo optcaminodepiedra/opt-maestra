@@ -9,13 +9,7 @@ import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
-/**
- * Placeholder del POS por orden.
- * La implementación completa viene en Fase 8B.
- *
- * Por ahora solo muestra info de la orden y un botón de volver.
- */
-export default async function POSPlaceholder({
+export default async function POSOrderPlaceholder({
   params,
 }: {
   params: Promise<{ orderId: string }>;
@@ -28,12 +22,10 @@ export default async function POSPlaceholder({
   const order = await prisma.restaurantOrder.findUnique({
     where: { id: orderId },
     include: {
-      table: { select: { name: true, area: true } },
+      table: { select: { name: true, area: true, businessId: true } },
       user: { select: { fullName: true } },
       items: {
-        include: {
-          menuItem: { select: { name: true, category: true } },
-        },
+        include: { menuItem: { select: { name: true, category: true } } },
       },
     },
   });
@@ -45,9 +37,9 @@ export default async function POSPlaceholder({
     new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(cents / 100);
 
   return (
-    <div className="p-4 md:p-6 max-w-3xl mx-auto space-y-4">
+    <div className="p-4 md:p-6 max-w-3xl mx-auto space-y-4 pb-24 md:pb-6">
       <Button variant="ghost" size="sm" asChild>
-        <Link href="/app/restaurant/tables">
+        <Link href={`/app/restaurant/tables?businessId=${order.table?.businessId ?? ""}`}>
           <ArrowLeft className="w-4 h-4 mr-1" /> Volver a mesas
         </Link>
       </Button>
@@ -70,26 +62,21 @@ export default async function POSPlaceholder({
           <div className="bg-blue-50 border border-blue-200 rounded p-3 text-sm">
             <p className="font-medium text-blue-900">🚧 POS rediseñado en construcción</p>
             <p className="text-xs text-blue-800 mt-1">
-              La interfaz completa del POS llega en la Fase 8B (próxima entrega).
-              Por ahora puedes ver la orden y volver a mesas.
+              La interfaz completa del POS llega en Fase 8B. Por ahora ves la orden y vuelves a mesas.
             </p>
           </div>
 
           {order.items.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-6">
-              Esta orden está vacía. La interfaz completa del POS te permitirá agregar productos.
+              Esta orden está vacía. La interfaz completa permitirá agregar productos.
             </p>
           ) : (
             <div className="border rounded-lg divide-y">
               {order.items.map((it) => (
                 <div key={it.id} className="flex items-center justify-between p-3">
                   <div>
-                    <p className="text-sm font-medium">
-                      {it.qty}× {it.menuItem.name}
-                    </p>
-                    {it.note && (
-                      <p className="text-xs text-muted-foreground italic">"{it.note}"</p>
-                    )}
+                    <p className="text-sm font-medium">{it.qty}× {it.menuItem.name}</p>
+                    {it.note && <p className="text-xs text-muted-foreground italic">"{it.note}"</p>}
                   </div>
                   <p className="text-sm font-medium">{fmt(it.qty * it.priceCents)}</p>
                 </div>

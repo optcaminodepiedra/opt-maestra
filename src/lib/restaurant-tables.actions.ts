@@ -3,43 +3,75 @@
 import { prisma } from "@/lib/prisma";
 import { getMe } from "@/lib/session";
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 
-/**
- * Carga todas las mesas de un negocio agrupadas por área,
- * con info de la orden actual abierta (si existe).
- */
-export async function getTablesWithStatus(businessId: string) {
-  const tables = await prisma.restaurantTable.findMany({
-    where: { businessId, isActive: true },
-    include: {
-      orders: {
-        where: { status: { in: ["OPEN", "SENT"] } },
-        include: {
-          user: { select: { fullName: true } },
-          items: {
-            select: {
-              id: true,
-              qty: true,
-              priceCents: true,
-              kitchenStatus: true,
+const CONFIG_ROLES = ["MASTER_ADMIN", "OWNER", "SUPERIOR", "MANAGER_OPS", "MANAGER_RESTAURANT"];
+
+async function assertCanManageRestaurant(businessId: string) {
+  const me = await getMe();
+  const role = (me as any).role as string;
+  if (!CONFIG_ROLES.includes(role)) {
+    throw new Error("No tienes permisos para administrar mesas.");
+  }
+  // Validar que el usuario tiene acceso a este negocio
+  if (!["MASTER_ADMIN", "OWNER"].includes(role)) {
+    const access = await prisma.userBusinessAccess.findFirst({
+      where: { userId: (me as any).id, businessId },
+    });
+    if (!access && (me as any).primaryBusinessId !== businessId) {
+      throw new Error("No tienes acceso a este negocio.");
+    }
+  }
+  return me;
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * Cargar layout completo (mesas + áreas + estado)
+ * ════════════════════════════════════════════════════════════════ */
+
+export async function getRestaurantLayout(businessId: string) {
+  const [tables, areasRaw] = await Promise.all([
+    prisma.restaurantTable.findMany({
+      where: { businessId, isActive: true },
+      include: {
+        orders: {
+          where: { status: { in: ["OPEN", "SENT"] } },
+          include: {
+            user: { select: { id: true, fullName: true } },
+            items: {
+              select: { id: true, qty: true, priceCents: true, kitchenStatus: true },
             },
           },
+          orderBy: { openedAt: "desc" },
+          take: 1,
         },
-        orderBy: { openedAt: "desc" },
-        take: 1,
       },
-    },
-    orderBy: [{ area: "asc" }, { sortOrder: "asc" }, { name: "asc" }],
-  });
+      orderBy: [{ area: "asc" }, { sortOrder: "asc" }],
+    }),
+    // Las áreas pueden no tener relación en Prisma generate por timing → query raw
+    prisma.$queryRaw<Array<{
+      id: string;
+      name: string;
+      posX: number;
+      posY: number;
+      width: number;
+      height: number;
+      color: string;
+      showBorder: boolean;
+      sortOrder: number;
+    }>>`
+      SELECT id, name, "posX", "posY", width, height, color, "showBorder", "sortOrder"
+      FROM "RestaurantArea"
+      WHERE "businessId" = ${businessId}
+      ORDER BY "sortOrder" ASC
+    `,
+  ]);
 
-  // Calcular el estado de cada mesa
   const now = new Date();
-  const result = tables.map((t) => {
+
+  const tablesEnriched = tables.map((t) => {
     const activeOrder = t.orders[0];
-    let status: "FREE" | "OCCUPIED" | "READY_TO_BILL" | "RESERVED" = "FREE";
+    let status: "FREE" | "OCCUPIED" | "READY_TO_BILL" = "FREE";
     let totalCents = 0;
-    let openedAt: Date | null = null;
     let minutesElapsed = 0;
     let mesero: string | null = null;
     let itemCount = 0;
@@ -47,35 +79,32 @@ export async function getTablesWithStatus(businessId: string) {
 
     if (activeOrder) {
       mesero = activeOrder.user?.fullName ?? null;
-      openedAt = activeOrder.openedAt;
       itemCount = activeOrder.items.length;
       pendingKitchen = activeOrder.items.filter(
         (i) => i.kitchenStatus === "NEW" || i.kitchenStatus === "PREPARING"
       ).length;
-      totalCents = activeOrder.items.reduce(
-        (sum, i) => sum + i.qty * i.priceCents,
-        0
-      );
+      totalCents = activeOrder.items.reduce((s, i) => s + i.qty * i.priceCents, 0);
       minutesElapsed = Math.floor(
         (now.getTime() - new Date(activeOrder.openedAt).getTime()) / 60000
       );
-
-      if (activeOrder.status === "SENT" && pendingKitchen === 0) {
-        status = "READY_TO_BILL";
-      } else {
-        status = "OCCUPIED";
-      }
+      status = activeOrder.status === "SENT" && pendingKitchen === 0 ? "READY_TO_BILL" : "OCCUPIED";
     }
 
     return {
       id: t.id,
       name: t.name,
-      area: t.area || "Sin área",
+      area: t.area,
       capacity: t.capacity,
+      shape: (t as any).shape ?? "SQUARE",
+      width: (t as any).width ?? 80,
+      height: (t as any).height ?? 80,
+      rotation: (t as any).rotation ?? 0,
+      posX: t.posX ?? 0,
+      posY: t.posY ?? 0,
+      sortOrder: t.sortOrder,
       status,
       activeOrderId: activeOrder?.id ?? null,
       mesero,
-      openedAtIso: openedAt?.toISOString() ?? null,
       minutesElapsed,
       itemCount,
       pendingKitchen,
@@ -83,29 +112,319 @@ export async function getTablesWithStatus(businessId: string) {
     };
   });
 
-  // Agrupar por área
-  const byArea: Record<string, typeof result> = {};
-  for (const t of result) {
-    if (!byArea[t.area]) byArea[t.area] = [];
-    byArea[t.area].push(t);
-  }
-
-  // Resumen
   const summary = {
-    total: result.length,
-    free: result.filter((t) => t.status === "FREE").length,
-    occupied: result.filter((t) => t.status === "OCCUPIED").length,
-    readyToBill: result.filter((t) => t.status === "READY_TO_BILL").length,
-    activeOrders: result.filter((t) => t.activeOrderId).length,
-    totalSalesOpenCents: result.reduce((s, t) => s + t.totalCents, 0),
+    total: tablesEnriched.length,
+    free: tablesEnriched.filter((t) => t.status === "FREE").length,
+    occupied: tablesEnriched.filter((t) => t.status === "OCCUPIED").length,
+    readyToBill: tablesEnriched.filter((t) => t.status === "READY_TO_BILL").length,
+    totalSalesOpenCents: tablesEnriched.reduce((s, t) => s + t.totalCents, 0),
   };
 
-  return { byArea, summary, areas: Object.keys(byArea).sort() };
+  return {
+    tables: tablesEnriched,
+    areas: areasRaw,
+    summary,
+  };
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * MESAS — CRUD
+ * ════════════════════════════════════════════════════════════════ */
+
+export async function createTable(input: {
+  businessId: string;
+  name: string;
+  capacity: number;
+  area?: string;
+  shape: "SQUARE" | "ROUND" | "RECTANGLE" | "BAR";
+  posX: number;
+  posY: number;
+  width: number;
+  height: number;
+  rotation?: number;
+}) {
+  await assertCanManageRestaurant(input.businessId);
+
+  // Verificar nombre único en el negocio
+  const exists = await prisma.restaurantTable.findFirst({
+    where: { businessId: input.businessId, name: input.name },
+  });
+  if (exists) {
+    throw new Error(`Ya existe una mesa con el nombre "${input.name}" en este restaurante.`);
+  }
+
+  const table = await prisma.restaurantTable.create({
+    data: {
+      businessId: input.businessId,
+      name: input.name.trim(),
+      capacity: input.capacity,
+      area: input.area?.trim() || null,
+      shape: input.shape as any,
+      posX: input.posX,
+      posY: input.posY,
+      width: input.width,
+      height: input.height,
+      rotation: input.rotation ?? 0,
+      isActive: true,
+    } as any,
+  });
+
+  revalidatePath("/app/restaurant/tables");
+  revalidatePath("/app/restaurant/tables/manage");
+  return { ok: true, id: table.id };
+}
+
+export async function updateTable(input: {
+  id: string;
+  name?: string;
+  capacity?: number;
+  area?: string | null;
+  shape?: "SQUARE" | "ROUND" | "RECTANGLE" | "BAR";
+  posX?: number;
+  posY?: number;
+  width?: number;
+  height?: number;
+  rotation?: number;
+  isActive?: boolean;
+}) {
+  const t = await prisma.restaurantTable.findUnique({
+    where: { id: input.id },
+    select: { businessId: true, name: true },
+  });
+  if (!t) throw new Error("Mesa no encontrada");
+
+  await assertCanManageRestaurant(t.businessId);
+
+  // Si cambia el nombre, validar unicidad
+  if (input.name && input.name !== t.name) {
+    const exists = await prisma.restaurantTable.findFirst({
+      where: { businessId: t.businessId, name: input.name, NOT: { id: input.id } },
+    });
+    if (exists) throw new Error(`Ya existe otra mesa con el nombre "${input.name}".`);
+  }
+
+  await prisma.restaurantTable.update({
+    where: { id: input.id },
+    data: {
+      ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+      ...(input.capacity !== undefined ? { capacity: input.capacity } : {}),
+      ...(input.area !== undefined ? { area: input.area?.trim() || null } : {}),
+      ...(input.shape !== undefined ? { shape: input.shape as any } : {}),
+      ...(input.posX !== undefined ? { posX: input.posX } : {}),
+      ...(input.posY !== undefined ? { posY: input.posY } : {}),
+      ...(input.width !== undefined ? { width: input.width } : {}),
+      ...(input.height !== undefined ? { height: input.height } : {}),
+      ...(input.rotation !== undefined ? { rotation: input.rotation } : {}),
+      ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
+    } as any,
+  });
+
+  revalidatePath("/app/restaurant/tables");
+  revalidatePath("/app/restaurant/tables/manage");
+  return { ok: true };
 }
 
 /**
- * Abre una nueva orden en una mesa libre, asignando mesero y nº de comensales.
+ * Update rápido de posición (drag&drop), no hace revalidate para no causar re-fetch full.
+ * El cliente actualiza visualmente y solo persiste al server.
  */
+export async function updateTablePosition(input: { id: string; posX: number; posY: number }) {
+  const t = await prisma.restaurantTable.findUnique({
+    where: { id: input.id },
+    select: { businessId: true },
+  });
+  if (!t) throw new Error("Mesa no encontrada");
+  await assertCanManageRestaurant(t.businessId);
+
+  await prisma.restaurantTable.update({
+    where: { id: input.id },
+    data: { posX: input.posX, posY: input.posY } as any,
+  });
+  return { ok: true };
+}
+
+export async function deleteTable(id: string) {
+  const t = await prisma.restaurantTable.findUnique({
+    where: { id },
+    include: { _count: { select: { orders: true } } },
+  });
+  if (!t) throw new Error("Mesa no encontrada");
+  await assertCanManageRestaurant(t.businessId);
+
+  if (t._count.orders > 0) {
+    // No la borramos: la desactivamos para conservar histórico
+    await prisma.restaurantTable.update({
+      where: { id },
+      data: { isActive: false },
+    });
+    revalidatePath("/app/restaurant/tables");
+    revalidatePath("/app/restaurant/tables/manage");
+    return { ok: true, deactivated: true };
+  }
+
+  await prisma.restaurantTable.delete({ where: { id } });
+  revalidatePath("/app/restaurant/tables");
+  revalidatePath("/app/restaurant/tables/manage");
+  return { ok: true, deactivated: false };
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * ÁREAS — CRUD
+ * ════════════════════════════════════════════════════════════════ */
+
+export async function createArea(input: {
+  businessId: string;
+  name: string;
+  posX?: number;
+  posY?: number;
+  width?: number;
+  height?: number;
+  color?: string;
+  showBorder?: boolean;
+}) {
+  await assertCanManageRestaurant(input.businessId);
+
+  // Validar unicidad
+  const exists = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM "RestaurantArea"
+    WHERE "businessId" = ${input.businessId} AND name = ${input.name.trim()}
+    LIMIT 1
+  `;
+  if (exists.length > 0) {
+    throw new Error(`Ya existe un área con el nombre "${input.name}".`);
+  }
+
+  const id = "area_" + Math.random().toString(36).slice(2, 18);
+  const posX = input.posX ?? 50;
+  const posY = input.posY ?? 50;
+  const width = input.width ?? 400;
+  const height = input.height ?? 300;
+  const color = input.color ?? "#f1f5f9";
+  const showBorder = input.showBorder ?? true;
+
+  await prisma.$executeRaw`
+    INSERT INTO "RestaurantArea"
+      ("id", "businessId", "name", "posX", "posY", "width", "height", "color", "showBorder", "sortOrder", "createdAt", "updatedAt")
+    VALUES
+      (${id}, ${input.businessId}, ${input.name.trim()}, ${posX}, ${posY}, ${width}, ${height}, ${color}, ${showBorder}, 0, NOW(), NOW())
+  `;
+
+  revalidatePath("/app/restaurant/tables");
+  revalidatePath("/app/restaurant/tables/manage");
+  return { ok: true, id };
+}
+
+export async function updateArea(input: {
+  id: string;
+  name?: string;
+  posX?: number;
+  posY?: number;
+  width?: number;
+  height?: number;
+  color?: string;
+  showBorder?: boolean;
+}) {
+  const rows = await prisma.$queryRaw<Array<{ businessId: string; name: string }>>`
+    SELECT "businessId", name FROM "RestaurantArea" WHERE id = ${input.id}
+  `;
+  if (rows.length === 0) throw new Error("Área no encontrada");
+  const area = rows[0];
+
+  await assertCanManageRestaurant(area.businessId);
+
+  // Si cambia nombre, validar unicidad y propagar a las mesas que usan ese área
+  let nameChanged = false;
+  if (input.name && input.name !== area.name) {
+    const exists = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM "RestaurantArea"
+      WHERE "businessId" = ${area.businessId}
+        AND name = ${input.name.trim()}
+        AND id != ${input.id}
+      LIMIT 1
+    `;
+    if (exists.length > 0) {
+      throw new Error(`Ya existe otra área llamada "${input.name}".`);
+    }
+    nameChanged = true;
+  }
+
+  // Construir UPDATE dinámico
+  const updates: string[] = [];
+  const values: any[] = [];
+  let i = 1;
+
+  if (input.name !== undefined) { updates.push(`name = $${i++}`); values.push(input.name.trim()); }
+  if (input.posX !== undefined) { updates.push(`"posX" = $${i++}`); values.push(input.posX); }
+  if (input.posY !== undefined) { updates.push(`"posY" = $${i++}`); values.push(input.posY); }
+  if (input.width !== undefined) { updates.push(`width = $${i++}`); values.push(input.width); }
+  if (input.height !== undefined) { updates.push(`height = $${i++}`); values.push(input.height); }
+  if (input.color !== undefined) { updates.push(`color = $${i++}`); values.push(input.color); }
+  if (input.showBorder !== undefined) { updates.push(`"showBorder" = $${i++}`); values.push(input.showBorder); }
+  updates.push(`"updatedAt" = NOW()`);
+
+  values.push(input.id);
+  const sql = `UPDATE "RestaurantArea" SET ${updates.join(", ")} WHERE id = $${i}`;
+
+  await prisma.$executeRawUnsafe(sql, ...values);
+
+  // Si cambió el nombre, actualizar las mesas que usaban este área
+  if (nameChanged && input.name) {
+    await prisma.restaurantTable.updateMany({
+      where: { businessId: area.businessId, area: area.name },
+      data: { area: input.name.trim() },
+    });
+  }
+
+  revalidatePath("/app/restaurant/tables");
+  revalidatePath("/app/restaurant/tables/manage");
+  return { ok: true };
+}
+
+export async function updateAreaPosition(input: {
+  id: string;
+  posX: number;
+  posY: number;
+}) {
+  const rows = await prisma.$queryRaw<Array<{ businessId: string }>>`
+    SELECT "businessId" FROM "RestaurantArea" WHERE id = ${input.id}
+  `;
+  if (rows.length === 0) throw new Error("Área no encontrada");
+  await assertCanManageRestaurant(rows[0].businessId);
+
+  await prisma.$executeRaw`
+    UPDATE "RestaurantArea"
+    SET "posX" = ${input.posX}, "posY" = ${input.posY}, "updatedAt" = NOW()
+    WHERE id = ${input.id}
+  `;
+  return { ok: true };
+}
+
+export async function deleteArea(id: string) {
+  const rows = await prisma.$queryRaw<Array<{ businessId: string; name: string }>>`
+    SELECT "businessId", name FROM "RestaurantArea" WHERE id = ${id}
+  `;
+  if (rows.length === 0) throw new Error("Área no encontrada");
+  const area = rows[0];
+
+  await assertCanManageRestaurant(area.businessId);
+
+  // Las mesas que estaban en esta área quedan con area = null
+  await prisma.restaurantTable.updateMany({
+    where: { businessId: area.businessId, area: area.name },
+    data: { area: null },
+  });
+
+  await prisma.$executeRaw`DELETE FROM "RestaurantArea" WHERE id = ${id}`;
+
+  revalidatePath("/app/restaurant/tables");
+  revalidatePath("/app/restaurant/tables/manage");
+  return { ok: true };
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * Operación: abrir orden, mover, descartar
+ * ════════════════════════════════════════════════════════════════ */
+
 export async function openOrderAtTable(input: {
   tableId: string;
   meseroId?: string;
@@ -121,21 +440,16 @@ export async function openOrderAtTable(input: {
   if (!table) throw new Error("Mesa no encontrada");
   if (!table.isActive) throw new Error("Mesa inactiva");
 
-  // Verificar que no haya orden abierta
-  const existingOpen = await prisma.restaurantOrder.findFirst({
-    where: {
-      tableId: table.id,
-      status: { in: ["OPEN", "SENT"] },
-    },
+  const existing = await prisma.restaurantOrder.findFirst({
+    where: { tableId: table.id, status: { in: ["OPEN", "SENT"] } },
   });
-  if (existingOpen) {
+  if (existing) {
     throw new Error(`La mesa ${table.name} ya tiene una orden abierta.`);
   }
 
-  // Validar mesero si se proporciona
   const userId = input.meseroId ?? (me as any).id;
-  const userExists = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
-  if (!userExists) throw new Error("Mesero no válido");
+  const u = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+  if (!u) throw new Error("Mesero no válido");
 
   const order = await prisma.restaurantOrder.create({
     data: {
@@ -147,39 +461,25 @@ export async function openOrderAtTable(input: {
     },
   });
 
-  revalidatePath(`/app/restaurant/tables`);
+  revalidatePath("/app/restaurant/tables");
   return { ok: true, orderId: order.id };
 }
 
-/**
- * Lista usuarios disponibles para ser mesero en este negocio.
- * (Filtra por rol staff_waiter, manager_*, master_admin, owner)
- */
 export async function getMeserosForBusiness(businessId: string) {
   const users = await prisma.user.findMany({
     where: {
       isActive: true,
-      OR: [
-        { primaryBusinessId: businessId },
-        { role: { in: ["MASTER_ADMIN", "OWNER", "SUPERIOR"] } },
-      ],
       role: {
         in: [
           "MASTER_ADMIN", "OWNER", "SUPERIOR",
-          "MANAGER_OPS", "MANAGER_RESTAURANT", "MANAGER",
+          "MANAGER_OPS", "MANAGER_RESTAURANT", "MANAGER_RANCH", "MANAGER",
           "STAFF_WAITER", "STAFF_BAR", "STAFF_CASHIER",
         ],
       },
     },
-    select: {
-      id: true,
-      fullName: true,
-      jobTitle: true,
-      role: true,
-    },
+    select: { id: true, fullName: true, jobTitle: true, role: true },
     orderBy: { fullName: "asc" },
   });
-
   return users.map((u) => ({
     id: u.id,
     name: u.fullName,
@@ -188,18 +488,26 @@ export async function getMeserosForBusiness(businessId: string) {
   }));
 }
 
-/**
- * Mueve una orden a otra mesa (reasignar mesa).
- */
-export async function moveOrderToTable(input: {
-  orderId: string;
-  newTableId: string;
-}) {
-  const me = await getMe();
+export async function discardEmptyOrder(orderId: string) {
+  await getMe();
+  const order = await prisma.restaurantOrder.findUnique({
+    where: { id: orderId },
+    include: { _count: { select: { items: true } } },
+  });
+  if (!order) throw new Error("Orden no encontrada");
+  if (order._count.items > 0) {
+    throw new Error("No se puede descartar una orden con productos.");
+  }
+  await prisma.restaurantOrder.delete({ where: { id: orderId } });
+  revalidatePath("/app/restaurant/tables");
+  return { ok: true };
+}
 
+export async function moveOrderToTable(input: { orderId: string; newTableId: string }) {
+  await getMe();
   const order = await prisma.restaurantOrder.findUnique({
     where: { id: input.orderId },
-    select: { id: true, businessId: true, status: true, tableId: true },
+    select: { id: true, businessId: true, status: true },
   });
   if (!order) throw new Error("Orden no encontrada");
   if (!["OPEN", "SENT"].includes(order.status)) {
@@ -208,48 +516,22 @@ export async function moveOrderToTable(input: {
 
   const newTable = await prisma.restaurantTable.findUnique({
     where: { id: input.newTableId },
-    select: { id: true, name: true, businessId: true, isActive: true },
+    select: { id: true, businessId: true, isActive: true, name: true },
   });
   if (!newTable) throw new Error("Mesa destino no encontrada");
   if (newTable.businessId !== order.businessId) {
-    throw new Error("La mesa destino es de otro negocio");
+    throw new Error("Mesa destino es de otro negocio");
   }
 
-  // Verificar que la mesa destino esté libre
-  const conflicting = await prisma.restaurantOrder.findFirst({
-    where: {
-      tableId: newTable.id,
-      status: { in: ["OPEN", "SENT"] },
-    },
+  const conflict = await prisma.restaurantOrder.findFirst({
+    where: { tableId: newTable.id, status: { in: ["OPEN", "SENT"] } },
   });
-  if (conflicting) {
-    throw new Error(`Mesa ${newTable.name} ya tiene una orden abierta`);
-  }
+  if (conflict) throw new Error(`Mesa ${newTable.name} ya tiene una orden abierta.`);
 
   await prisma.restaurantOrder.update({
     where: { id: order.id },
     data: { tableId: newTable.id },
   });
-
-  revalidatePath(`/app/restaurant/tables`);
-  return { ok: true };
-}
-
-/**
- * Cierra (cancela) una orden vacía (sin items) — útil cuando alguien abrió mesa por error.
- */
-export async function discardEmptyOrder(orderId: string) {
-  const me = await getMe();
-  const order = await prisma.restaurantOrder.findUnique({
-    where: { id: orderId },
-    include: { _count: { select: { items: true } } },
-  });
-  if (!order) throw new Error("Orden no encontrada");
-  if (order._count.items > 0) {
-    throw new Error("No se puede descartar una orden con productos. Cobra o anula primero.");
-  }
-
-  await prisma.restaurantOrder.delete({ where: { id: orderId } });
-  revalidatePath(`/app/restaurant/tables`);
+  revalidatePath("/app/restaurant/tables");
   return { ok: true };
 }
