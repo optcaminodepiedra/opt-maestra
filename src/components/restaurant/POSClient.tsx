@@ -1,14 +1,13 @@
 "use client";
 
-import { useState, useTransition, useMemo, useRef, useEffect } from "react";
+import { useState, useTransition, useMemo, useRef, useEffect, useOptimistic, startTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-  Search, Plus, Minus, Trash2, ChefHat, DollarSign, X,
-  ShoppingCart, AlertCircle, ArrowLeft, ChevronUp, ChevronDown,
-  StickyNote, Send, CreditCard, Coffee, UtensilsCrossed, CheckCircle2,
+  Search, Plus, Minus, Trash2, X, ShoppingCart, AlertCircle,
+  ArrowLeft, StickyNote, Send, CreditCard, UtensilsCrossed, CheckCircle2,
 } from "lucide-react";
 import Link from "next/link";
 import {
@@ -84,84 +83,162 @@ const CATEGORY_EMOJI: Record<string, string> = {
 };
 
 function emojiFor(cat: string) {
-  const k = cat.toLowerCase().trim();
-  return CATEGORY_EMOJI[k] ?? "🍽️";
+  return CATEGORY_EMOJI[cat.toLowerCase().trim()] ?? "🍽️";
 }
+
+/* ═══════════════════════════════════════════════════════════════
+ * OPTIMISTIC REDUCER
+ * Actualiza items localmente antes de la respuesta del servidor
+ * ═══════════════════════════════════════════════════════════════ */
+
+type OptimisticAction =
+  | { type: "ADD"; item: OrderItem }
+  | { type: "INCREMENT"; itemId: string; menuItemId: string; priceCents: number; name: string; category: string; station: string }
+  | { type: "UPDATE_QTY"; itemId: string; qty: number }
+  | { type: "REMOVE"; itemId: string }
+  | { type: "UPDATE_NOTE"; itemId: string; note: string }
+  | { type: "SYNC"; items: OrderItem[] };
+
+function optimisticReducer(state: OrderItem[], action: OptimisticAction): OrderItem[] {
+  switch (action.type) {
+    case "ADD":
+      return [...state, action.item];
+
+    case "INCREMENT": {
+      // Buscar item existente sin nota
+      const idx = state.findIndex(
+        (i) => i.menuItemId === action.menuItemId && !i.note && i.kitchenStatus === "NEW"
+      );
+      if (idx >= 0) {
+        const updated = [...state];
+        updated[idx] = {
+          ...updated[idx],
+          qty: updated[idx].qty + 1,
+          subtotalCents: (updated[idx].qty + 1) * updated[idx].priceCents,
+        };
+        return updated;
+      }
+      // No existe, agregar nuevo (temporal)
+      return [...state, {
+        id: `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        menuItemId: action.menuItemId,
+        name: action.name,
+        category: action.category,
+        station: action.station as any,
+        qty: 1,
+        priceCents: action.priceCents,
+        note: null,
+        kitchenStatus: "NEW",
+        subtotalCents: action.priceCents,
+      }];
+    }
+
+    case "UPDATE_QTY":
+      return state.map((i) =>
+        i.id === action.itemId
+          ? { ...i, qty: action.qty, subtotalCents: action.qty * i.priceCents }
+          : i
+      );
+
+    case "REMOVE":
+      return state.filter((i) => i.id !== action.itemId);
+
+    case "UPDATE_NOTE":
+      return state.map((i) => (i.id === action.itemId ? { ...i, note: action.note || null } : i));
+
+    case "SYNC":
+      return action.items;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════ */
 
 export function POSClient({ order: initialOrder, categories, categoryNames, cashpoints }: Props) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [order, setOrder] = useState<Order>(initialOrder);
+  const [error, setError] = useState<string | null>(null);
+
+  // Estado optimistic de items
+  const [items, dispatchItems] = useOptimistic(
+    initialOrder.items,
+    optimisticReducer
+  );
+
+  // Sync con server cuando cambia initialOrder
+  useEffect(() => {
+    startTransition(() => {
+      dispatchItems({ type: "SYNC", items: initialOrder.items });
+    });
+  }, [initialOrder.items]);
+
   const [activeCategory, setActiveCategory] = useState<string | "ALL">(categoryNames[0] ?? "ALL");
   const [search, setSearch] = useState("");
-  const [error, setError] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"products" | "cart">("products");
 
-  // Modal de modificadores (long-press)
+  // Modales
   const [modifierItem, setModifierItem] = useState<MenuItem | null>(null);
   const [modifierQty, setModifierQty] = useState(1);
   const [modifierNote, setModifierNote] = useState("");
 
-  // Modal de editar item
   const [editingItem, setEditingItem] = useState<OrderItem | null>(null);
   const [editingNote, setEditingNote] = useState("");
 
-  // Modal de checkout
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<"CASH" | "CARD" | "TRANSFER">("CASH");
   const [cashpointId, setCashpointId] = useState(cashpoints[0]?.id ?? "");
   const [tipAmount, setTipAmount] = useState(0);
 
-  // Long-press detection
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // Re-sync con props
-  useEffect(() => {
-    setOrder(initialOrder);
-  }, [initialOrder]);
-
-  // ─── Filtros ─────────────────────────────────────────────────
+  // ─── Cálculos ───────────────────────────────────────────────
 
   const visibleItems = useMemo(() => {
-    let items: MenuItem[] = [];
+    let res: MenuItem[] = [];
     if (search.trim()) {
       const q = search.toLowerCase().trim();
       for (const cat of categoryNames) {
-        items.push(...(categories[cat] || []).filter((i) => i.name.toLowerCase().includes(q)));
+        res.push(...(categories[cat] || []).filter((i) => i.name.toLowerCase().includes(q)));
       }
     } else if (activeCategory === "ALL") {
-      for (const cat of categoryNames) {
-        items.push(...(categories[cat] || []));
-      }
+      for (const cat of categoryNames) res.push(...(categories[cat] || []));
     } else {
-      items = categories[activeCategory] || [];
+      res = categories[activeCategory] || [];
     }
-    return items;
+    return res;
   }, [search, activeCategory, categories, categoryNames]);
 
-  // ─── Cálculos ────────────────────────────────────────────────
-
-  const subtotal = useMemo(() => order.items.reduce((s, i) => s + i.subtotalCents, 0), [order.items]);
+  const subtotal = useMemo(() => items.reduce((s, i) => s + i.subtotalCents, 0), [items]);
   const total = subtotal + tipAmount;
-  const hasNewItems = order.items.some((i) => i.kitchenStatus === "NEW");
-  const allDelivered = order.items.length > 0 && order.items.every(
-    (i) => i.kitchenStatus === "READY" || i.kitchenStatus === "DELIVERED"
-  );
-  const newItemsCount = order.items.filter((i) => i.kitchenStatus === "NEW").length;
+  const hasNewItems = items.some((i) => i.kitchenStatus === "NEW");
+  const newItemsCount = items.filter((i) => i.kitchenStatus === "NEW").length;
 
   // ─── Acciones ────────────────────────────────────────────────
 
   function handleProductPress(item: MenuItem) {
-    // Tap rápido = +1 cantidad
-    start(async () => {
-      try {
-        await addItemToOrder({ orderId: order.id, menuItemId: item.id, qty: 1 });
-        router.refresh();
-        setError(null);
-      } catch (err: any) {
-        setError(err.message);
-      }
+    // Optimistic: actualizar UI INMEDIATAMENTE
+    startTransition(() => {
+      dispatchItems({
+        type: "INCREMENT",
+        itemId: "",
+        menuItemId: item.id,
+        priceCents: item.priceCents,
+        name: item.name,
+        category: item.category,
+        station: (item.station ?? "KITCHEN"),
+      });
     });
+
+    // Servidor en segundo plano
+    addItemToOrder({ orderId: initialOrder.id, menuItemId: item.id, qty: 1 })
+      .then(() => {
+        // Refrescar para obtener IDs reales del server
+        router.refresh();
+      })
+      .catch((err: any) => {
+        setError(err.message);
+        // Rollback al estado del server
+        router.refresh();
+      });
   }
 
   function handleProductLongPress(item: MenuItem) {
@@ -172,47 +249,69 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
 
   function handleAddWithModifiers() {
     if (!modifierItem) return;
-    start(async () => {
-      try {
-        await addItemToOrder({
-          orderId: order.id,
-          menuItemId: modifierItem.id,
-          qty: modifierQty,
-          note: modifierNote.trim() || undefined,
-        });
-        setModifierItem(null);
-        router.refresh();
-        setError(null);
-      } catch (err: any) {
-        setError(err.message);
-      }
+    const item = modifierItem;
+    const qty = modifierQty;
+    const note = modifierNote.trim();
+
+    setModifierItem(null);
+
+    // Optimistic
+    startTransition(() => {
+      dispatchItems({
+        type: "ADD",
+        item: {
+          id: `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          menuItemId: item.id,
+          name: item.name,
+          category: item.category,
+          station: (item.station ?? "KITCHEN") as any,
+          qty,
+          priceCents: item.priceCents,
+          note: note || null,
+          kitchenStatus: "NEW",
+          subtotalCents: qty * item.priceCents,
+        },
+      });
     });
+
+    addItemToOrder({ orderId: initialOrder.id, menuItemId: item.id, qty, note: note || undefined })
+      .then(() => router.refresh())
+      .catch((err: any) => {
+        setError(err.message);
+        router.refresh();
+      });
   }
 
   function handleItemQtyChange(item: OrderItem, delta: number) {
     if (item.kitchenStatus !== "NEW") return;
     const newQty = item.qty + delta;
-    start(async () => {
-      try {
-        await updateItemQuantity({ itemId: item.id, qty: newQty });
-        router.refresh();
-      } catch (err: any) {
+
+    if (newQty <= 0) {
+      startTransition(() => dispatchItems({ type: "REMOVE", itemId: item.id }));
+    } else {
+      startTransition(() => dispatchItems({ type: "UPDATE_QTY", itemId: item.id, qty: newQty }));
+    }
+
+    updateItemQuantity({ itemId: item.id, qty: newQty })
+      .then(() => router.refresh())
+      .catch((err: any) => {
         setError(err.message);
-      }
-    });
+        router.refresh();
+      });
   }
 
   function handleItemDelete(item: OrderItem) {
     if (item.kitchenStatus !== "NEW") return;
     if (!confirm(`¿Quitar ${item.name} de la orden?`)) return;
-    start(async () => {
-      try {
-        await updateItemQuantity({ itemId: item.id, qty: 0 });
-        router.refresh();
-      } catch (err: any) {
+
+    startTransition(() => dispatchItems({ type: "REMOVE", itemId: item.id }));
+
+    updateItemQuantity({ itemId: item.id, qty: 0 })
+      .then(() => router.refresh())
+      .catch((err: any) => {
         setError(err.message);
-      }
-    });
+        router.refresh();
+      });
   }
 
   function handleEditNote(item: OrderItem) {
@@ -222,22 +321,25 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
 
   function handleSaveNote() {
     if (!editingItem) return;
-    start(async () => {
-      try {
-        await updateItemNote({ itemId: editingItem.id, note: editingNote });
-        setEditingItem(null);
-        router.refresh();
-      } catch (err: any) {
+    const itemId = editingItem.id;
+    const note = editingNote;
+
+    startTransition(() => dispatchItems({ type: "UPDATE_NOTE", itemId, note }));
+    setEditingItem(null);
+
+    updateItemNote({ itemId, note })
+      .then(() => router.refresh())
+      .catch((err: any) => {
         setError(err.message);
-      }
-    });
+        router.refresh();
+      });
   }
 
   function handleSendToKitchen() {
     if (!hasNewItems) return;
     start(async () => {
       try {
-        await sendOrderToKitchen(order.id);
+        await sendOrderToKitchen(initialOrder.id);
         router.refresh();
         setError(null);
       } catch (err: any) {
@@ -247,7 +349,7 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
   }
 
   function handleCheckout() {
-    if (order.items.length === 0) {
+    if (items.length === 0) {
       setError("La orden está vacía");
       return;
     }
@@ -259,21 +361,20 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
   function handleConfirmCheckout() {
     start(async () => {
       try {
-        const res = await checkoutOrder({
-          orderId: order.id,
+        await checkoutOrder({
+          orderId: initialOrder.id,
           paymentMethod,
           cashpointId,
           tipCents: tipAmount,
         });
-        // Redirigir a mesas después de cobrar
-        router.push(`/app/restaurant/tables?businessId=${order.businessId}`);
+        router.push(`/app/restaurant/tables?businessId=${initialOrder.businessId}`);
       } catch (err: any) {
         setError(err.message);
       }
     });
   }
 
-  // ─── Helpers long-press en touch ─────────────────────────────
+  // ─── Long-press detection ────────────────────────────────────
 
   function bindLongPress(item: MenuItem) {
     return {
@@ -317,25 +418,24 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
       <div className="bg-background border-b sticky top-0 z-30">
         <div className="p-3 flex items-center gap-2">
           <Button variant="ghost" size="sm" asChild>
-            <Link href={`/app/restaurant/tables?businessId=${order.businessId}`}>
+            <Link href={`/app/restaurant/tables?businessId=${initialOrder.businessId}`}>
               <ArrowLeft className="w-4 h-4" />
             </Link>
           </Button>
           <div className="min-w-0 flex-1">
             <h1 className="text-lg font-bold flex items-center gap-2">
               <UtensilsCrossed className="w-4 h-4 text-orange-500" />
-              Mesa {order.tableName}
+              Mesa {initialOrder.tableName}
             </h1>
             <p className="text-[11px] text-muted-foreground truncate">
-              {order.tableArea} · {order.mesero}
+              {initialOrder.tableArea} · {initialOrder.mesero}
             </p>
           </div>
-          <Badge variant={order.status === "OPEN" ? "outline" : "default"} className="text-[10px]">
-            {order.status === "OPEN" ? "Abierta" : order.status === "SENT" ? "En cocina" : order.status}
+          <Badge variant={initialOrder.status === "OPEN" ? "outline" : "default"} className="text-[10px]">
+            {initialOrder.status === "OPEN" ? "Abierta" : initialOrder.status === "SENT" ? "En cocina" : initialOrder.status}
           </Badge>
         </div>
 
-        {/* Tabs móvil: productos / carrito */}
         <div className="lg:hidden flex border-t">
           <button
             onClick={() => setMobileTab("products")}
@@ -347,8 +447,8 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
             onClick={() => setMobileTab("cart")}
             className={`flex-1 py-2 text-sm font-medium relative ${mobileTab === "cart" ? "bg-primary text-primary-foreground" : ""}`}
           >
-            🛒 Orden ({order.items.length})
-            {order.items.length > 0 && (
+            🛒 Orden ({items.length})
+            {items.length > 0 && (
               <span className="absolute top-1 right-2 text-[10px] font-bold">
                 {fmt(subtotal)}
               </span>
@@ -368,7 +468,7 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
       )}
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-[180px_1fr_360px] gap-0 overflow-hidden">
-        {/* COLUMNA 1: Categorías */}
+        {/* Categorías */}
         <div className={`${mobileTab === "products" ? "block" : "hidden"} lg:block border-r bg-muted/20 overflow-y-auto`}>
           <div className="p-2 space-y-1">
             <button
@@ -395,9 +495,8 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
           </div>
         </div>
 
-        {/* COLUMNA 2: Productos */}
+        {/* Productos */}
         <div className={`${mobileTab === "products" ? "block" : "hidden"} lg:block overflow-y-auto`}>
-          {/* Buscador */}
           <div className="sticky top-0 bg-background p-3 border-b z-10">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -409,10 +508,7 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
                 className="w-full h-10 pl-9 pr-3 border rounded-lg text-sm bg-background"
               />
               {search && (
-                <button
-                  onClick={() => setSearch("")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2"
-                >
+                <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2">
                   <X className="w-4 h-4 text-muted-foreground" />
                 </button>
               )}
@@ -422,18 +518,16 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
             </p>
           </div>
 
-          {/* Grid productos */}
           <div className="p-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 gap-2">
             {visibleItems.length === 0 ? (
               <div className="col-span-full text-center text-muted-foreground text-sm py-12">
-                {search ? "No se encontraron productos" : "No hay productos en esta categoría"}
+                {search ? "No se encontraron productos" : "No hay productos"}
               </div>
             ) : (
               visibleItems.map((item) => (
                 <button
                   key={item.id}
                   {...bindLongPress(item)}
-                  disabled={pending}
                   className="
                     flex flex-col items-center justify-between
                     aspect-square p-3 rounded-xl border-2 border-muted
@@ -458,22 +552,22 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
           </div>
         </div>
 
-        {/* COLUMNA 3: Orden actual */}
+        {/* Orden actual */}
         <div className={`${mobileTab === "cart" ? "block" : "hidden"} lg:block border-l bg-muted/10 flex flex-col overflow-hidden`}>
           <div className="p-3 border-b bg-background">
             <h2 className="text-sm font-bold flex items-center gap-2">
               <ShoppingCart className="w-4 h-4" />
-              Orden ({order.items.length})
+              Orden ({items.length})
             </h2>
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {order.items.length === 0 ? (
+            {items.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-8">
                 Toca productos para agregar a la orden
               </p>
             ) : (
-              order.items.map((item) => {
+              items.map((item) => {
                 const isEditable = item.kitchenStatus === "NEW";
                 return (
                   <div
@@ -508,42 +602,19 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
                       {isEditable ? (
                         <>
                           <div className="flex items-center gap-1">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 w-7 p-0"
-                              onClick={() => handleItemQtyChange(item, -1)}
-                              disabled={pending}
-                            >
+                            <Button size="sm" variant="outline" className="h-7 w-7 p-0" onClick={() => handleItemQtyChange(item, -1)}>
                               <Minus className="w-3 h-3" />
                             </Button>
                             <span className="w-8 text-center text-sm font-medium">{item.qty}</span>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 w-7 p-0"
-                              onClick={() => handleItemQtyChange(item, 1)}
-                              disabled={pending}
-                            >
+                            <Button size="sm" variant="outline" className="h-7 w-7 p-0" onClick={() => handleItemQtyChange(item, 1)}>
                               <Plus className="w-3 h-3" />
                             </Button>
                           </div>
                           <div className="flex gap-1">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-7 px-2 text-[10px]"
-                              onClick={() => handleEditNote(item)}
-                            >
+                            <Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={() => handleEditNote(item)}>
                               <StickyNote className="w-3 h-3 mr-1" /> Nota
                             </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-7 w-7 p-0 text-red-600 hover:bg-red-50"
-                              onClick={() => handleItemDelete(item)}
-                              disabled={pending}
-                            >
+                            <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-600 hover:bg-red-50" onClick={() => handleItemDelete(item)}>
                               <Trash2 className="w-3 h-3" />
                             </Button>
                           </div>
@@ -560,8 +631,7 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
             )}
           </div>
 
-          {/* Footer con total + botones */}
-          {order.items.length > 0 && (
+          {items.length > 0 && (
             <div className="border-t bg-background p-3 space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Subtotal</span>
@@ -584,22 +654,28 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
                 </Button>
               )}
 
+              {/* COBRAR siempre habilitado */}
               <Button
                 size="lg"
                 className="w-full h-12 bg-green-600 hover:bg-green-700"
                 onClick={handleCheckout}
-                disabled={pending || hasNewItems}
-                title={hasNewItems ? "Envía los productos a cocina antes de cobrar" : undefined}
+                disabled={pending}
               >
                 <CreditCard className="w-4 h-4 mr-2" />
                 Cobrar y cerrar
               </Button>
+
+              {hasNewItems && (
+                <p className="text-[10px] text-muted-foreground text-center">
+                  💡 Si cobras sin enviar a cocina, los productos se marcan como entregados directamente
+                </p>
+              )}
             </div>
           )}
         </div>
       </div>
 
-      {/* Modal: Long-press / Modificadores */}
+      {/* Modal modificadores */}
       {modifierItem && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <Card className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl">
@@ -620,9 +696,7 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
                     <Minus className="w-5 h-5" />
                   </Button>
                   <input
-                    type="number"
-                    min={1}
-                    value={modifierQty}
+                    type="number" min={1} value={modifierQty}
                     onChange={(e) => setModifierQty(parseInt(e.target.value) || 1)}
                     className="w-20 h-12 text-center text-xl font-bold border rounded-lg bg-background"
                   />
@@ -635,8 +709,7 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
               <div>
                 <label className="text-xs text-muted-foreground uppercase">Nota / modificadores</label>
                 <input
-                  type="text"
-                  value={modifierNote}
+                  type="text" value={modifierNote}
                   onChange={(e) => setModifierNote(e.target.value)}
                   placeholder="ej: sin cebolla, término medio..."
                   className="w-full h-10 px-3 mt-1 border rounded-lg text-sm bg-background"
@@ -660,7 +733,7 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
                 <span className="text-lg font-bold">{fmt(modifierItem.priceCents * modifierQty)}</span>
               </div>
 
-              <Button size="lg" className="w-full h-12" onClick={handleAddWithModifiers} disabled={pending}>
+              <Button size="lg" className="w-full h-12" onClick={handleAddWithModifiers}>
                 Agregar a orden
               </Button>
             </CardContent>
@@ -668,7 +741,7 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
         </div>
       )}
 
-      {/* Modal: Editar nota de item existente */}
+      {/* Modal editar nota */}
       {editingItem && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <Card className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl">
@@ -677,8 +750,7 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
             </CardHeader>
             <CardContent className="space-y-3">
               <input
-                type="text"
-                value={editingNote}
+                type="text" value={editingNote}
                 onChange={(e) => setEditingNote(e.target.value)}
                 placeholder="Nota o modificador..."
                 className="w-full h-10 px-3 border rounded-lg bg-background"
@@ -686,14 +758,14 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
               />
               <div className="flex gap-2 justify-end">
                 <Button variant="outline" onClick={() => setEditingItem(null)}>Cancelar</Button>
-                <Button onClick={handleSaveNote} disabled={pending}>Guardar</Button>
+                <Button onClick={handleSaveNote}>Guardar</Button>
               </div>
             </CardContent>
           </Card>
         </div>
       )}
 
-      {/* Modal: Checkout */}
+      {/* Modal checkout */}
       {checkoutOpen && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <Card className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl">
@@ -701,7 +773,7 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
               <div className="flex items-start justify-between">
                 <CardTitle className="text-base flex items-center gap-2">
                   <CreditCard className="w-5 h-5 text-green-600" />
-                  Cobrar mesa {order.tableName}
+                  Cobrar mesa {initialOrder.tableName}
                 </CardTitle>
                 <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setCheckoutOpen(false)}>
                   <X className="w-4 h-4" />
@@ -711,7 +783,7 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
             <CardContent className="space-y-3">
               <div className="bg-muted/30 rounded-lg p-3 space-y-1">
                 <div className="flex justify-between text-sm">
-                  <span>Subtotal ({order.items.length} productos)</span>
+                  <span>Subtotal ({items.length} productos)</span>
                   <span>{fmt(subtotal)}</span>
                 </div>
                 {tipAmount > 0 && (

@@ -3,11 +3,17 @@ import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ChefHat, ShieldAlert, Construction } from "lucide-react";
-import { resolveRestaurantBusinessId, listRestaurantOptions } from "@/lib/restaurant-resolve";
+import { ChefHat, ShieldAlert } from "lucide-react";
+import {
+  resolveRestaurantBusinessId,
+  listRestaurantOptions,
+} from "@/lib/restaurant-resolve";
 import { RestaurantSelector } from "@/components/restaurant/RestaurantSelector";
+import { getKDSOrders } from "@/lib/kds.actions";
+import { KDSClient } from "@/components/restaurant/KDSClient";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 const ALLOWED_ROLES = [
   "MASTER_ADMIN", "OWNER", "SUPERIOR",
@@ -15,10 +21,10 @@ const ALLOWED_ROLES = [
   "STAFF_KITCHEN", "STAFF_BAR", "STAFF_WAITER",
 ];
 
-export default async function KDSPlaceholder({
+export default async function KDSPage({
   searchParams,
 }: {
-  searchParams: Promise<{ businessId?: string }>;
+  searchParams: Promise<{ businessId?: string; station?: string }>;
 }) {
   const session = await getServerSession(authOptions);
   if (!session?.user) redirect("/login");
@@ -65,16 +71,22 @@ export default async function KDSPlaceholder({
     );
   }
 
-  const [business, options, pendingCount] = await Promise.all([
+  // Station filter
+  const rawStation = (sp.station ?? "ALL").toUpperCase();
+  const station: "KITCHEN" | "BAR" | "ALL" =
+    rawStation === "KITCHEN" ? "KITCHEN" :
+    rawStation === "BAR" ? "BAR" : "ALL";
+
+  // Si el usuario es STAFF_BAR, forzar barra
+  const actualStation: "KITCHEN" | "BAR" | "ALL" =
+    role === "STAFF_BAR" ? "BAR" :
+    role === "STAFF_KITCHEN" ? "KITCHEN" :
+    station;
+
+  const [business, options, orders] = await Promise.all([
     prisma.business.findUnique({ where: { id: businessId }, select: { name: true } }),
     listRestaurantOptions(userId, role),
-    prisma.restaurantOrder.count({
-      where: {
-        businessId,
-        status: "SENT",
-        items: { some: { kitchenStatus: { in: ["NEW", "PREPARING"] } } },
-      },
-    }),
+    getKDSOrders({ businessId, station: actualStation }),
   ]);
 
   return (
@@ -91,40 +103,11 @@ export default async function KDSPlaceholder({
         <RestaurantSelector current={businessId} options={options} />
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <Construction className="w-5 h-5 text-amber-500" />
-            KDS rediseñado en construcción
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="bg-blue-50 border border-blue-200 rounded p-3 text-sm">
-            <p className="font-medium text-blue-900">🚧 Próximamente en Fase 8C</p>
-            <p className="text-xs text-blue-800 mt-1">
-              La pantalla de cocina rediseñada llega después del POS (Fase 8B).
-              Tendrá cards grandes, colores por urgencia, sonido al llegar nueva orden,
-              y filtros por estación (cocina vs barra).
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="border rounded p-3">
-              <p className="text-xs text-muted-foreground uppercase">Órdenes pendientes</p>
-              <p className="text-2xl font-bold mt-1">{pendingCount}</p>
-            </div>
-            <div className="border rounded p-3">
-              <p className="text-xs text-muted-foreground uppercase">Estado</p>
-              <p className="text-sm mt-1 text-amber-600 font-medium">En desarrollo</p>
-            </div>
-          </div>
-
-          <p className="text-xs text-muted-foreground">
-            Por ahora puedes ver órdenes pendientes desde la vista de Mesas (las mesas con
-            indicador 🔥 de cocina pendiente).
-          </p>
-        </CardContent>
-      </Card>
+      <KDSClient
+        businessId={businessId}
+        station={actualStation}
+        initialOrders={orders}
+      />
     </div>
   );
 }

@@ -31,17 +31,14 @@ export async function getOrderForPOS(orderId: string) {
 
   if (!order) throw new Error("Orden no encontrada");
 
-  // Verificar acceso al negocio
   const ok = await userCanAccessBusiness((me as any).id, role, order.businessId);
   if (!ok) throw new Error("No tienes acceso a este restaurante");
 
-  // Cargar menú activo del negocio
   const menuItems = await prisma.menuItem.findMany({
     where: { businessId: order.businessId, isActive: true },
     orderBy: [{ category: "asc" }, { sortOrder: "asc" } as any, { name: "asc" }],
   });
 
-  // Agrupar menú por categoría
   const categories: Record<string, typeof menuItems> = {};
   for (const item of menuItems) {
     if (!categories[item.category]) categories[item.category] = [];
@@ -85,7 +82,7 @@ export async function getOrderForPOS(orderId: string) {
 }
 
 /**
- * Agrega un producto a la orden (o aumenta cantidad si ya existe).
+ * Agrega un producto a la orden. Optimizado: NO revalida si ya hay re-fetch en cliente.
  */
 export async function addItemToOrder(input: {
   orderId: string;
@@ -110,7 +107,7 @@ export async function addItemToOrder(input: {
 
   const menuItem = await prisma.menuItem.findUnique({
     where: { id: input.menuItemId },
-    select: { id: true, businessId: true, name: true, priceCents: true, isActive: true },
+    select: { id: true, businessId: true, name: true, priceCents: true, isActive: true, category: true, station: true as any },
   });
   if (!menuItem) throw new Error("Producto no encontrado");
   if (menuItem.businessId !== order.businessId) {
@@ -121,27 +118,41 @@ export async function addItemToOrder(input: {
   const qty = Math.max(1, input.qty ?? 1);
   const noteVal = input.note?.trim() || null;
 
-  // Si NO hay nota, intentar consolidar con un item existente sin nota
+  // Consolidar si no hay nota
   if (!noteVal) {
     const existing = await prisma.restaurantOrderItem.findFirst({
       where: {
         orderId: order.id,
         menuItemId: menuItem.id,
         note: null,
-        kitchenStatus: "NEW", // solo consolidar si aún no se envió a cocina
+        kitchenStatus: "NEW",
       },
     });
     if (existing) {
-      await prisma.restaurantOrderItem.update({
+      const updated = await prisma.restaurantOrderItem.update({
         where: { id: existing.id },
         data: { qty: existing.qty + qty },
       });
-      revalidatePath(`/app/restaurant/pos/${order.id}`);
-      return { ok: true, consolidated: true, itemId: existing.id };
+      // Retornar el item actualizado para optimistic UI
+      return {
+        ok: true,
+        consolidated: true,
+        item: {
+          id: updated.id,
+          menuItemId: menuItem.id,
+          name: menuItem.name,
+          category: menuItem.category,
+          station: (menuItem as any).station ?? "KITCHEN",
+          qty: updated.qty,
+          priceCents: updated.priceCents,
+          note: null,
+          kitchenStatus: "NEW",
+          subtotalCents: updated.qty * updated.priceCents,
+        },
+      };
     }
   }
 
-  // Crear nueva línea
   const created = await prisma.restaurantOrderItem.create({
     data: {
       orderId: order.id,
@@ -153,12 +164,26 @@ export async function addItemToOrder(input: {
     },
   });
 
-  revalidatePath(`/app/restaurant/pos/${order.id}`);
-  return { ok: true, consolidated: false, itemId: created.id };
+  return {
+    ok: true,
+    consolidated: false,
+    item: {
+      id: created.id,
+      menuItemId: menuItem.id,
+      name: menuItem.name,
+      category: menuItem.category,
+      station: (menuItem as any).station ?? "KITCHEN",
+      qty: created.qty,
+      priceCents: created.priceCents,
+      note: created.note,
+      kitchenStatus: "NEW",
+      subtotalCents: created.qty * created.priceCents,
+    },
+  };
 }
 
 /**
- * Cambia la cantidad de un item existente. Si qty=0, lo elimina.
+ * Cambia la cantidad de un item. Si qty=0, lo elimina.
  */
 export async function updateItemQuantity(input: { itemId: string; qty: number }) {
   const me = await getMe();
@@ -181,15 +206,14 @@ export async function updateItemQuantity(input: { itemId: string; qty: number })
 
   if (input.qty <= 0) {
     await prisma.restaurantOrderItem.delete({ where: { id: input.itemId } });
-  } else {
-    await prisma.restaurantOrderItem.update({
-      where: { id: input.itemId },
-      data: { qty: input.qty },
-    });
+    return { ok: true, deleted: true };
   }
 
-  revalidatePath(`/app/restaurant/pos/${item.order.id}`);
-  return { ok: true };
+  const updated = await prisma.restaurantOrderItem.update({
+    where: { id: input.itemId },
+    data: { qty: input.qty },
+  });
+  return { ok: true, deleted: false, item: { id: updated.id, qty: updated.qty } };
 }
 
 /**
@@ -214,14 +238,14 @@ export async function updateItemNote(input: { itemId: string; note: string }) {
     where: { id: input.itemId },
     data: { note: input.note.trim() || null },
   });
-
-  revalidatePath(`/app/restaurant/pos/${item.order.id}`);
   return { ok: true };
 }
 
 /**
  * Envía los items NEW a cocina (marca como PREPARING).
  * Cambia el estado de la orden a SENT.
+ *
+ * FIX: ya no escribe sentToKitchenAt (campo no existe en schema).
  */
 export async function sendOrderToKitchen(orderId: string) {
   const me = await getMe();
@@ -243,6 +267,7 @@ export async function sendOrderToKitchen(orderId: string) {
     throw new Error("No hay items nuevos para enviar a cocina");
   }
 
+  // Solo updates, sin sentToKitchenAt
   await prisma.$transaction([
     prisma.restaurantOrderItem.updateMany({
       where: { id: { in: newItems.map((i) => i.id) } },
@@ -250,7 +275,7 @@ export async function sendOrderToKitchen(orderId: string) {
     }),
     prisma.restaurantOrder.update({
       where: { id: orderId },
-      data: { status: "SENT", sentToKitchenAt: new Date() as any },
+      data: { status: "SENT" },
     }),
   ]);
 
@@ -261,7 +286,8 @@ export async function sendOrderToKitchen(orderId: string) {
 
 /**
  * Cierra y cobra la orden, generando un Sale.
- * Marca la mesa como libre.
+ * Permite cobrar SIN haber enviado a cocina (caso experiencias/RZR).
+ * Si hay items NEW, los marca como DELIVERED automáticamente.
  */
 export async function checkoutOrder(input: {
   orderId: string;
@@ -280,7 +306,7 @@ export async function checkoutOrder(input: {
     },
   });
   if (!order) throw new Error("Orden no encontrada");
-  if (order.status === "CLOSED" || order.status === "PAID") {
+  if (order.status === "PAID" || order.status === "CANCELED") {
     throw new Error("Orden ya cerrada");
   }
   if (order.items.length === 0) {
@@ -294,7 +320,6 @@ export async function checkoutOrder(input: {
   const tipCents = Math.max(0, input.tipCents ?? 0);
   const totalCents = subtotal + tipCents;
 
-  // Verificar cashpoint
   const cp = await prisma.cashpoint.findUnique({ where: { id: input.cashpointId } });
   if (!cp || cp.businessId !== order.businessId) {
     throw new Error("Caja inválida para este negocio");
@@ -302,8 +327,19 @@ export async function checkoutOrder(input: {
 
   const concept = `Mesa ${order.table?.name ?? "?"} · Orden #${order.id.slice(-6).toUpperCase()}`;
 
-  // Crear Sale + cerrar Order
-  const [sale] = await prisma.$transaction([
+  // Marcar items NEW como DELIVERED (bypass cocina cuando se cobra directo)
+  const newItems = order.items.filter((i) => i.kitchenStatus === "NEW");
+
+  await prisma.$transaction([
+    // Si hay items NEW (cobrar sin pasar por cocina), marcarlos DELIVERED
+    ...(newItems.length > 0
+      ? [
+          prisma.restaurantOrderItem.updateMany({
+            where: { id: { in: newItems.map((i) => i.id) } },
+            data: { kitchenStatus: "DELIVERED" },
+          }),
+        ]
+      : []),
     prisma.sale.create({
       data: {
         businessId: order.businessId,
@@ -318,7 +354,7 @@ export async function checkoutOrder(input: {
       where: { id: order.id },
       data: {
         status: "PAID",
-        closedAt: new Date() as any,
+        closedAt: new Date(),
       },
     }),
   ]);
@@ -328,7 +364,6 @@ export async function checkoutOrder(input: {
 
   return {
     ok: true,
-    saleId: sale.id,
     totalCents,
     subtotalCents: subtotal,
     tipCents,
