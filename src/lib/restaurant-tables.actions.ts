@@ -154,19 +154,43 @@ export async function createTable(input: {
   rotation?: number;
 }) {
   await assertCanManageRestaurant(input.businessId);
+  const trimmedName = input.name.trim();
 
-  // Verificar nombre único en el negocio
-  const exists = await prisma.restaurantTable.findFirst({
-    where: { businessId: input.businessId, name: input.name },
+  // Buscar si ya existe una mesa con ese nombre (activa o inactiva)
+  const existing = await prisma.restaurantTable.findFirst({
+    where: { businessId: input.businessId, name: trimmedName },
   });
-  if (exists) {
-    throw new Error(`Ya existe una mesa con el nombre "${input.name}" en este restaurante.`);
+
+  if (existing) {
+    if (existing.isActive) {
+      // Si está activa, error real (no se puede duplicar)
+      throw new Error(`Ya existe una mesa con el nombre "${trimmedName}" en este restaurante.`);
+    }
+    // Si está inactiva → REACTIVAR y actualizar con nuevos datos
+    const reactivated = await prisma.restaurantTable.update({
+      where: { id: existing.id },
+      data: {
+        capacity: input.capacity,
+        area: input.area?.trim() || null,
+        shape: input.shape as any,
+        posX: input.posX,
+        posY: input.posY,
+        width: input.width,
+        height: input.height,
+        rotation: input.rotation ?? 0,
+        isActive: true,
+      } as any,
+    });
+    revalidatePath("/app/restaurant/tables");
+    revalidatePath("/app/restaurant/tables/manage");
+    return { ok: true, id: reactivated.id, reactivated: true };
   }
 
+  // Crear mesa nueva
   const table = await prisma.restaurantTable.create({
     data: {
       businessId: input.businessId,
-      name: input.name.trim(),
+      name: trimmedName,
       capacity: input.capacity,
       area: input.area?.trim() || null,
       shape: input.shape as any,
@@ -181,7 +205,7 @@ export async function createTable(input: {
 
   revalidatePath("/app/restaurant/tables");
   revalidatePath("/app/restaurant/tables/manage");
-  return { ok: true, id: table.id };
+  return { ok: true, id: table.id, reactivated: false };
 }
 
 export async function updateTable(input: {
@@ -205,12 +229,33 @@ export async function updateTable(input: {
 
   await assertCanManageRestaurant(t.businessId);
 
-  // Si cambia el nombre, validar unicidad
+  // Si cambia el nombre, validar unicidad (solo mesas activas)
   if (input.name && input.name !== t.name) {
     const exists = await prisma.restaurantTable.findFirst({
-      where: { businessId: t.businessId, name: input.name, NOT: { id: input.id } },
+      where: {
+        businessId: t.businessId,
+        name: input.name,
+        isActive: true,
+        NOT: { id: input.id },
+      },
     });
-    if (exists) throw new Error(`Ya existe otra mesa con el nombre "${input.name}".`);
+    if (exists) throw new Error(`Ya existe otra mesa activa con el nombre "${input.name}".`);
+
+    // Si hay una mesa INACTIVA con ese nombre, no podemos asignarlo (constraint UNIQUE)
+    const inactiveExists = await prisma.restaurantTable.findFirst({
+      where: {
+        businessId: t.businessId,
+        name: input.name,
+        isActive: false,
+        NOT: { id: input.id },
+      },
+    });
+    if (inactiveExists) {
+      throw new Error(
+        `El nombre "${input.name}" está reservado por una mesa inactiva con histórico. ` +
+        `Pide a un admin que limpie mesas inactivas o usa otro nombre.`
+      );
+    }
   }
 
   await prisma.restaurantTable.update({
