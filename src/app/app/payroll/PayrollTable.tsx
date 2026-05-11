@@ -9,6 +9,55 @@ import { approveWorkDay, deleteWorkDay } from "@/lib/payroll.actions";
 
 const TZ = "America/Mexico_City";
 
+// Días y meses cortos en español
+const DIAS_CORTOS = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+const MESES_CORTOS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+/**
+ * Formatea una fecha tipo "2026-05-11" (string del server) sin
+ * caer en problemas de zona horaria.
+ *
+ * El server ahora envía date como string YYYY-MM-DD (no como Date),
+ * así que extraemos los componentes literalmente.
+ */
+function formatDateMx(d: string | Date | null | undefined): string {
+  if (!d) return "—";
+
+  let year: number, month: number, day: number;
+
+  if (typeof d === "string") {
+    // String "YYYY-MM-DD" o ISO
+    const isoPart = d.slice(0, 10); // primeros 10 caracteres = YYYY-MM-DD
+    [year, month, day] = isoPart.split("-").map(Number);
+  } else {
+    // Fallback: Date object con UTC getters
+    year = d.getUTCFullYear();
+    month = d.getUTCMonth() + 1;
+    day = d.getUTCDate();
+  }
+
+  // Calcular día de semana usando Date en UTC explícito (no aplica TZ)
+  const tempDate = new Date(Date.UTC(year, month - 1, day));
+  const diaSemana = DIAS_CORTOS[tempDate.getUTCDay()];
+  const mesNombre = MESES_CORTOS[month - 1];
+
+  return `${diaSemana} ${String(day).padStart(2, "0")} ${mesNombre}`;
+}
+
+/**
+ * Formatea hora real (timestamp completo con hora) en TZ México.
+ * Esto SÍ usa Intl porque punch.timestamp es un timestamp completo
+ * y queremos verlo en hora local de México.
+ */
+function formatTimeMx(d: Date | string): string {
+  const date = typeof d === "string" ? new Date(d) : d;
+  return new Intl.DateTimeFormat("es-MX", {
+    timeZone: TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 export default function PayrollTable({ records }: { records: any[] }) {
   const [expandedRows, setExpandedRows] = useState<string[]>([]);
   const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -44,27 +93,6 @@ export default function PayrollTable({ records }: { records: any[] }) {
     }
   };
 
-  // ↓↓↓ HELPER seguro para formatear fechas con zona México
-  // Funciona con Date objects o strings ISO
-  const formatDateMx = (d: Date | string): string => {
-    const date = typeof d === "string" ? new Date(d) : d;
-    return new Intl.DateTimeFormat("es-MX", {
-      timeZone: TZ,
-      weekday: "short",
-      day: "2-digit",
-      month: "short",
-    }).format(date);
-  };
-
-  const formatTimeMx = (d: Date | string): string => {
-    const date = typeof d === "string" ? new Date(d) : d;
-    return new Intl.DateTimeFormat("es-MX", {
-      timeZone: TZ,
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(date);
-  };
-
   return (
     <>
       <Card className="shadow-sm">
@@ -89,7 +117,6 @@ export default function PayrollTable({ records }: { records: any[] }) {
 
                   let horasTrabajadas = "—";
                   if (entrada && salida) {
-                    // Asegurar que sean Date objects (no strings)
                     const entradaTime = entrada.timestamp instanceof Date
                       ? entrada.timestamp
                       : new Date(entrada.timestamp);
@@ -103,7 +130,6 @@ export default function PayrollTable({ records }: { records: any[] }) {
 
                   return (
                     <Fragment key={day.id}>
-                      {/* FILA PRINCIPAL */}
                       <tr className={`hover:bg-muted/10 transition-colors ${isExpanded ? "bg-muted/5" : ""} ${isLoading ? "opacity-50" : ""}`}>
                         <td className="px-6 py-4 font-medium cursor-pointer" onClick={() => toggleRow(day.id)}>
                           <div className="text-base">{day.user?.fullName || "Sin nombre"}</div>
@@ -112,7 +138,6 @@ export default function PayrollTable({ records }: { records: any[] }) {
 
                         <td className="px-6 py-4 cursor-pointer" onClick={() => toggleRow(day.id)}>
                           <div className="font-medium mb-1 whitespace-nowrap">
-                            {/* ↓↓↓ FIX: usar helper con TZ México */}
                             {formatDateMx(day.date)}
                           </div>
                           {day.status === "OPEN" && <Badge variant="outline" className="text-blue-600 bg-blue-50 border-blue-200">En Turno</Badge>}
@@ -146,7 +171,6 @@ export default function PayrollTable({ records }: { records: any[] }) {
                         </td>
                       </tr>
 
-                      {/* FILA COLAPSABLE */}
                       {isExpanded && (
                         <tr className="bg-muted/5">
                           <td colSpan={4} className="px-6 py-4 pb-6 border-b-2 border-primary/10">
@@ -162,7 +186,6 @@ export default function PayrollTable({ records }: { records: any[] }) {
                                     </span>
                                     <span className="flex items-center gap-1 text-sm font-semibold text-muted-foreground">
                                       <Clock className="w-3.5 h-3.5" />
-                                      {/* ↓↓↓ FIX: usar helper con TZ México */}
                                       {formatTimeMx(punch.timestamp)}
                                     </span>
                                   </div>
@@ -220,7 +243,6 @@ export default function PayrollTable({ records }: { records: any[] }) {
         </CardContent>
       </Card>
 
-      {/* MODAL */}
       {selectedImage && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200"
