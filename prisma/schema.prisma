@@ -49,6 +49,12 @@ enum WithdrawalKind {
   LARGE_REQUEST
 }
 
+enum MenuStation {
+  KITCHEN
+  BAR
+  NONE
+}
+
 model Business {
   id        String   @id @default(cuid())
   name      String   @unique
@@ -459,6 +465,12 @@ model MenuItem {
   category   String
   priceCents Int
   isActive   Boolean  @default(true)
+
+  // ── NUEVO ──
+  station    MenuStation @default(KITCHEN)
+  printGroup String?      // ej: "Parrilla", "Fríos", "Barra principal"
+  sortOrder  Int         @default(0)
+
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -467,6 +479,7 @@ model MenuItem {
 
   @@index([businessId, isActive])
   @@index([businessId, category])
+  @@index([businessId, station])
   @@index([cashpointId])
 }
 
