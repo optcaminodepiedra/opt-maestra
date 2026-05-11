@@ -55,10 +55,40 @@ enum MenuStation {
   NONE
 }
 
+enum PrinterRole {
+  KITCHEN
+  BAR
+  CASHIER
+  OTHER
+}
+
+enum PrintJobStatus {
+  PENDING
+  PRINTING
+  PRINTED
+  FAILED
+  CANCELED
+}
+
+enum PrintJobType {
+  KITCHEN_TICKET
+  BAR_TICKET
+  CUSTOMER_RECEIPT
+  OTHER
+}
+
 model Business {
   id        String   @id @default(cuid())
   name      String   @unique
   createdAt DateTime @default(now())
+
+    ticketHeader     String?
+  ticketFooter     String?
+  ticketPhone      String?
+  ticketAddress    String?
+  ticketWebsite    String?
+  ticketTagline    String?
+  printAgentToken  String? @unique
 
   cashpoints  Cashpoint[]
   sales       Sale[]
@@ -94,6 +124,9 @@ inventoryMovesDestination  InventoryMovement[] @relation("InventoryMovementDesti
   scheduledShifts ScheduledShift[] @relation("BusinessScheduledShifts")
 
   userAccess UserBusinessAccess[]
+
+  printers   Printer[]   @relation("BusinessPrinters")
+  printJobs  PrintJob[]  @relation("BusinessPrintJobs")
 
   // Hotel al que este negocio sirve alimentos (Bodega 4 -> Camino de Piedra)
   linkedHotelBusinessId String?
@@ -1251,4 +1284,55 @@ model RestaurantArea {
 
   @@unique([businessId, name])
   @@index([businessId])
+}
+
+model Printer {
+  id         String      @id @default(cuid())
+  businessId String
+  business   Business    @relation("BusinessPrinters", fields: [businessId], references: [id], onDelete: Cascade)
+
+  name       String
+  role       PrinterRole @default(CASHIER)
+  ipAddress  String
+  port       Int         @default(9100)
+  paperWidth Int         @default(48)  // caracteres (48 = 80mm térmico estándar)
+  isActive   Boolean     @default(true)
+  lastSeenAt DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  printJobs PrintJob[]
+
+  @@index([businessId, isActive])
+  @@index([businessId, role])
+}
+
+model PrintJob {
+  id         String         @id @default(cuid())
+  businessId String
+  business   Business       @relation("BusinessPrintJobs", fields: [businessId], references: [id], onDelete: Cascade)
+
+  printerId  String?
+  printer    Printer?       @relation(fields: [printerId], references: [id])
+
+  type       PrintJobType
+  status     PrintJobStatus @default(PENDING)
+
+  orderId    String?  // RestaurantOrder.id si aplica
+  saleId     String?  // Sale.id si aplica
+
+  payload    Json     // contenido a imprimir (estructurado)
+  rawBytes   String?  // ESC/POS bytes en base64 (cache opcional)
+
+  attempts   Int      @default(0)
+  lastError  String?
+
+  createdAt  DateTime @default(now())
+  claimedAt  DateTime?
+  printedAt  DateTime?
+
+  @@index([status, createdAt])
+  @@index([businessId, status])
+  @@index([printerId, status])
 }
