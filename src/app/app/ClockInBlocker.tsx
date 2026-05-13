@@ -1,20 +1,19 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import Webcam from "react-webcam";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
-  Camera, RefreshCw, Loader2, LogIn, LogOut, AlertCircle,
+  Camera, RefreshCw, Loader2, LogIn, LogOut, AlertCircle, CheckCircle2,
 } from "lucide-react";
 import { forceClockIn, closeWorkDay } from "@/lib/payroll.actions";
 
 type Props = {
   userName: string;
   userId: string;
-  // Tipo que se espera registrar
   expectedType: "ENTRADA" | "SALIDA";
-  // Si es una SALIDA desde un botón flotante, permitir cancelar para volver atrás
   allowCancel?: boolean;
   onCancel?: () => void;
 };
@@ -22,10 +21,12 @@ type Props = {
 export default function ClockInBlocker({
   userName, userId, expectedType, allowCancel, onCancel,
 }: Props) {
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [imgSrc, setImgSrc] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const webcamRef = useRef<Webcam>(null);
 
   const isExit = expectedType === "SALIDA";
@@ -41,25 +42,44 @@ export default function ClockInBlocker({
     if (!imgSrc) return;
     setLoading(true);
     setError(null);
+    setSuccessMsg(null);
 
     const submitPunch = async (lat?: number, lng?: number) => {
       try {
+        console.log("[ClockIn] Llamando forceClockIn...", { userId, lat, lng, hasPhoto: !!imgSrc });
         const result = await forceClockIn(userId, lat, lng, imgSrc, notes);
+        console.log("[ClockIn] Resultado:", result);
 
-        // Si fue SALIDA, también cerramos el WorkDay
+        // Si fue SALIDA, cerramos el WorkDay
         if (result.type === "SALIDA") {
+          console.log("[ClockIn] Cerrando WorkDay...");
           await closeWorkDay(userId);
         }
 
-        window.location.reload();
+        setSuccessMsg(
+          result.type === "SALIDA"
+            ? "✓ Salida registrada"
+            : "✓ Entrada registrada"
+        );
+
+        // Esperar un instante para que el usuario vea el éxito, luego refrescar
+        // router.refresh() invalida el RSC cache y vuelve a ejecutar el layout
+        // (que ahora verá que ya hay turno abierto y no mostrará el blocker)
+        setTimeout(() => {
+          router.refresh();
+          // Si era un modal de SALIDA con onCancel, cerrarlo también
+          if (allowCancel && onCancel) {
+            onCancel();
+          }
+        }, 800);
       } catch (err: any) {
-        console.error(err);
+        console.error("[ClockIn] ERROR:", err);
         setError(err.message || "Error al registrar. Inténtalo de nuevo.");
         setLoading(false);
       }
     };
 
-    // GPS con timeout corto
+    // GPS con timeout
     if (!navigator.geolocation) {
       await submitPunch();
       return;
@@ -67,7 +87,10 @@ export default function ClockInBlocker({
 
     navigator.geolocation.getCurrentPosition(
       (pos) => submitPunch(pos.coords.latitude, pos.coords.longitude),
-      () => submitPunch(), // sin GPS si falla
+      (gpsErr) => {
+        console.warn("[ClockIn] GPS falló, registrando sin coordenadas:", gpsErr.message);
+        submitPunch();
+      },
       { timeout: 8000, enableHighAccuracy: false }
     );
   };
@@ -96,6 +119,12 @@ export default function ClockInBlocker({
             </div>
           )}
 
+          {successMsg && (
+            <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 border border-green-200 rounded p-3 text-left">
+              <CheckCircle2 className="w-4 h-4 shrink-0" /> {successMsg}
+            </div>
+          )}
+
           {/* Cámara o preview */}
           <div className="relative aspect-video bg-black rounded-lg overflow-hidden border-2 border-slate-200">
             {!imgSrc ? (
@@ -111,6 +140,7 @@ export default function ClockInBlocker({
                   onClick={capture}
                   className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full h-12 w-12"
                   variant="secondary"
+                  disabled={loading}
                 >
                   <Camera />
                 </Button>
@@ -119,13 +149,15 @@ export default function ClockInBlocker({
               <div className="relative h-full w-full">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={imgSrc} alt="captura" className="h-full w-full object-cover" />
-                <Button
-                  onClick={() => setImgSrc(null)}
-                  className="absolute top-2 right-2 rounded-full h-8 w-8 p-0"
-                  variant="destructive"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                </Button>
+                {!loading && !successMsg && (
+                  <Button
+                    onClick={() => setImgSrc(null)}
+                    className="absolute top-2 right-2 rounded-full h-8 w-8 p-0"
+                    variant="destructive"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </Button>
+                )}
               </div>
             )}
           </div>
@@ -139,6 +171,7 @@ export default function ClockInBlocker({
               placeholder={placeholderNota}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
+              disabled={loading || !!successMsg}
             />
           </div>
 
@@ -147,10 +180,12 @@ export default function ClockInBlocker({
             size="lg"
             className={`w-full h-14 ${colorBoton}`}
             onClick={handlePunch}
-            disabled={loading || !imgSrc}
+            disabled={loading || !imgSrc || !!successMsg}
           >
             {loading ? (
               <Loader2 className="animate-spin" />
+            ) : successMsg ? (
+              <CheckCircle2 className="w-5 h-5 mr-2" />
             ) : (
               <>
                 <IconoBoton className="w-5 h-5 mr-2" />
@@ -159,14 +194,8 @@ export default function ClockInBlocker({
             )}
           </Button>
 
-          {/* Botón cancelar (solo en SALIDA desde botón flotante) */}
-          {allowCancel && onCancel && (
-            <Button
-              variant="ghost"
-              className="w-full"
-              onClick={onCancel}
-              disabled={loading}
-            >
+          {allowCancel && onCancel && !loading && !successMsg && (
+            <Button variant="ghost" className="w-full" onClick={onCancel}>
               Cancelar y volver
             </Button>
           )}
