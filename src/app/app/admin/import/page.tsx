@@ -53,6 +53,16 @@ export default async function AdminImportPage() {
           </Link>
         </Button>
       </div>
+      
+      ```tsx
+<Link
+  href="/app/admin/import/xml"
+  className="block px-3 py-2 hover:bg-muted/30 rounded"
+>
+  <span className="text-sm font-medium">XML SoftRestaurant</span>
+  <span className="block text-xs text-muted-foreground">Respaldos VFPData</span>
+</Link>
+```
 
       <ImportWizard businesses={businesses} />
     </div>

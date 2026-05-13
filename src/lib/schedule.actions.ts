@@ -3,9 +3,60 @@
 import { prisma } from "@/lib/prisma";
 import { getMe, isManager } from "@/lib/session";
 import { revalidatePath } from "next/cache";
-import { dateOnly, isoDate } from "@/lib/schedule";
 
-/* ═══════════════════════════ Helpers ═══════════════════════════ */
+const TZ = "America/Mexico_City";
+
+// ═══════════════════════════════════════════════════════════════
+// HELPERS DE FECHA — siempre zona México
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Convierte string "YYYY-MM-DD" a Date.
+ *
+ * IMPORTANTE: Como ScheduledShift.date es @db.Date, Postgres SOLO guarda
+ * el día (sin hora ni zona). Usamos T12:00:00Z (mediodía UTC) para que
+ * cuando se lea de vuelta y se convierta a México, NUNCA caiga al día
+ * anterior por la conversión de zona horaria.
+ *
+ * Esto sigue funcionando porque Postgres ignora la parte de hora al
+ * almacenar en @db.Date.
+ */
+function dateOnlyMx(iso: string): Date {
+  return new Date(`${iso}T12:00:00.000Z`);
+}
+
+/**
+ * Convierte Date @db.Date a string "YYYY-MM-DD".
+ * Usa UTC getters para evitar conversión por zona horaria.
+ */
+function dateToIso(d: Date | null | undefined): string | null {
+  if (!d) return null;
+  const date = typeof d === "string" ? new Date(d) : d;
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Devuelve la fecha actual de México en formato "YYYY-MM-DD".
+ */
+function todayMexicoIso(): string {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+
+  const y = parts.find((p) => p.type === "year")?.value ?? "1970";
+  const m = parts.find((p) => p.type === "month")?.value ?? "01";
+  const d = parts.find((p) => p.type === "day")?.value ?? "01";
+  return `${y}-${m}-${d}`;
+}
+
+/* ═══════════════════════════ Helpers de permisos ═══════════════════════════ */
 
 async function assertManagerForBusiness(businessId: string) {
   const me = await getMe();
@@ -13,13 +64,10 @@ async function assertManagerForBusiness(businessId: string) {
     throw new Error("Sin permisos para programar turnos.");
   }
 
-  // MASTER_ADMIN, OWNER, SUPERIOR: acceso total
   if (["MASTER_ADMIN", "OWNER", "SUPERIOR"].includes(me.role as string)) {
     return me;
   }
 
-  // Gerentes específicos: debe ser su primaryBusinessId
-  // o tener acceso vía UserBusinessAccess (caso Claudia multi-negocio)
   if ((me as any).primaryBusinessId === businessId) return me;
 
   try {
@@ -29,40 +77,42 @@ async function assertManagerForBusiness(businessId: string) {
       LIMIT 1
     `;
     if (access.length > 0) return me;
-  } catch {
-    // UserBusinessAccess puede no existir aún
-  }
+  } catch {}
 
   throw new Error("No tienes acceso a ese negocio.");
 }
 
 function validateTime(time: string | null | undefined): string | null {
   if (!time) return null;
-  // Acepta HH:MM (00:00 a 23:59)
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
     throw new Error(`Hora inválida: ${time}. Formato esperado HH:MM.`);
   }
   return time;
 }
 
-/* ═══════════════════════════ Crear turno ═══════════════════════════ */
+/* ═══════════════════════════ Crear / actualizar turno ═══════════════════════════ */
 
 export async function createScheduledShift(input: {
   userId: string;
   businessId: string;
   dateIso: string;           // "YYYY-MM-DD"
-  startTime?: string | null; // "07:00"
-  endTime?: string | null;   // "15:00"
+  startTime?: string | null;
+  endTime?: string | null;
   role?: string | null;
   note?: string | null;
 }) {
   const me = await assertManagerForBusiness(input.businessId);
 
-  const date = dateOnly(input.dateIso);
+  // Validar formato ISO antes de convertir
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.dateIso)) {
+    throw new Error(`Fecha inválida: ${input.dateIso}. Formato esperado YYYY-MM-DD.`);
+  }
+
+  // ↓↓↓ FIX: usar mediodía UTC para evitar drift de timezone
+  const date = dateOnlyMx(input.dateIso);
   const start = validateTime(input.startTime);
   const end = validateTime(input.endTime);
 
-  // Validar que el usuario exista y esté activo
   const user = await prisma.user.findUnique({
     where: { id: input.userId },
     select: { id: true, isActive: true },
@@ -70,7 +120,6 @@ export async function createScheduledShift(input: {
   if (!user) throw new Error("Usuario no encontrado.");
   if (!user.isActive) throw new Error("Usuario inactivo.");
 
-  // Upsert: si ya existe un turno ese día, lo actualizamos
   const shift = await prisma.scheduledShift.upsert({
     where: {
       userId_businessId_date: {
@@ -167,7 +216,7 @@ export async function cancelScheduledShift(shiftId: string) {
   return { ok: true };
 }
 
-/* ═══════════════════════════ Borrado definitivo (solo PLANNED futuros) ═══════════════════════════ */
+/* ═══════════════════════════ Borrado definitivo ═══════════════════════════ */
 
 export async function deleteScheduledShift(shiftId: string) {
   const current = await prisma.scheduledShift.findUnique({
@@ -176,8 +225,9 @@ export async function deleteScheduledShift(shiftId: string) {
   });
   if (!current) throw new Error("Turno no encontrado.");
 
-  const today = dateOnly(isoDate());
-  if (current.date < today) {
+  // ↓↓↓ FIX: comparar contra hoy en México, no en UTC
+  const todayDateMx = dateOnlyMx(todayMexicoIso());
+  if (current.date < todayDateMx) {
     throw new Error("No se pueden eliminar turnos pasados. Usa cancelar en su lugar.");
   }
   if (current.status === "CONFIRMED") {
@@ -195,12 +245,8 @@ export async function deleteScheduledShift(shiftId: string) {
   return { ok: true };
 }
 
-/* ═══════════════════════════ Copiar semana (power tool) ═══════════════════════════ */
+/* ═══════════════════════════ Copiar semana ═══════════════════════════ */
 
-/**
- * Copia todos los turnos de una semana a la siguiente.
- * Útil para cuando la plantilla es estable semana a semana.
- */
 export async function copyWeekShifts(input: {
   businessId: string;
   fromWeekMondayIso: string;
@@ -209,7 +255,7 @@ export async function copyWeekShifts(input: {
 }) {
   const me = await assertManagerForBusiness(input.businessId);
 
-  const fromStart = dateOnly(input.fromWeekMondayIso);
+  const fromStart = dateOnlyMx(input.fromWeekMondayIso);
   const fromEnd = new Date(fromStart);
   fromEnd.setUTCDate(fromEnd.getUTCDate() + 7);
 
@@ -225,12 +271,11 @@ export async function copyWeekShifts(input: {
     return { ok: true, copied: 0, skipped: 0 };
   }
 
-  const toStart = dateOnly(input.toWeekMondayIso);
+  const toStart = dateOnlyMx(input.toWeekMondayIso);
   let copied = 0;
   let skipped = 0;
 
   for (const s of fromShifts) {
-    // Calcular la fecha equivalente en la nueva semana
     const daysDiff = Math.floor(
       (s.date.getTime() - fromStart.getTime()) / (24 * 3600 * 1000)
     );
@@ -284,7 +329,6 @@ export async function copyWeekShifts(input: {
         copied++;
       }
     } catch {
-      // Ya existía y no es overwrite
       skipped++;
     }
   }

@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import type { ScheduledShiftStatus } from "@prisma/client";
 
+const TZ = "America/Mexico_City";
+
 export type TodayShiftRow = {
   shiftId: string;
   userId: string;
@@ -16,25 +18,30 @@ export type TodayShiftRow = {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// ZONA HORARIA MÉXICO (UTC-6, sin DST desde 2022)
+// HELPERS DE FECHA — siempre zona México
 // ═══════════════════════════════════════════════════════════════
-const TZ = "America/Mexico_City";
 
 /**
- * Devuelve YYYY-MM-DD en zona México (independiente del servidor).
- *
- * Funciona así:
- *   - Toma un Date (ej. "ahora")
- *   - Lo formatea con Intl en zona México
- *   - Devuelve el string del día EN MÉXICO
- *
- * Ejemplo:
- *   Servidor en UTC: new Date() = 2026-05-11T16:50:00Z
- *   En México son las 10:50 AM del 11 de mayo
- *   isoDate() → "2026-05-11" ✓
+ * Devuelve YYYY-MM-DD en zona México (no en zona del servidor).
  */
 export function isoDate(d: Date = new Date()): string {
-  // en-CA da formato YYYY-MM-DD nativo
+  // Si recibimos un Date que vino de @db.Date (UTC fix con mediodía o medianoche),
+  // usamos UTC getters para no aplicar TZ.
+  // Si es un Date "ahora", usamos Intl con TZ México.
+
+  // Detección: si la hora UTC es exactamente 00:00:00 o 12:00:00, es @db.Date
+  if (d.getUTCMilliseconds() === 0 && d.getUTCSeconds() === 0 && d.getUTCMinutes() === 0) {
+    const h = d.getUTCHours();
+    if (h === 0 || h === 12) {
+      // Es @db.Date — usar UTC getters
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const day = String(d.getUTCDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+  }
+
+  // Es un timestamp normal — usar zona México
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: TZ,
     year: "numeric",
@@ -49,35 +56,22 @@ export function isoDate(d: Date = new Date()): string {
 }
 
 /**
- * Convierte YYYY-MM-DD a Date.
- *
- * Guarda como "medianoche en México" pero expresada en UTC:
- *   - "2026-05-11" en México = 2026-05-11T06:00:00Z (UTC)
- *
- * Esto asegura que cuando formatees el Date en cualquier cliente
- * con zona México, te muestre el día correcto.
- *
- * Importante: si el cliente está en otra zona, igual mostrará el día
- * correcto porque el Date apunta a un momento real que cae dentro del
- * "día" en México.
+ * Convierte string "YYYY-MM-DD" a Date.
+ * Usa mediodía UTC para evitar drift de timezone.
  */
 export function dateOnly(iso: string): Date {
-  // Construir manualmente: medianoche México (UTC-6) = 06:00:00 UTC
-  // Sin DST porque México lo eliminó en 2022
-  return new Date(`${iso}T06:00:00.000Z`);
+  return new Date(`${iso}T12:00:00.000Z`);
 }
 
 /**
  * Devuelve el lunes de la semana actual EN MÉXICO en formato ISO.
  */
 export function currentWeekMondayIso(from: Date = new Date()): string {
-  // Sacar la fecha de hoy en México
   const todayIso = isoDate(from);
   const [y, m, d] = todayIso.split("-").map(Number);
 
-  // Crear Date con esos componentes (UTC para evitar drift)
   const tempDate = new Date(Date.UTC(y, m - 1, d));
-  const dayOfWeek = tempDate.getUTCDay(); // 0=Dom, 1=Lun, ..., 6=Sáb
+  const dayOfWeek = tempDate.getUTCDay();
   const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
   tempDate.setUTCDate(tempDate.getUTCDate() + diffToMonday);
 
@@ -88,40 +82,21 @@ export function currentWeekMondayIso(from: Date = new Date()): string {
 }
 
 /**
- * Formatea un Date para mostrar en UI (cliente o server)
- * usando la zona horaria de México.
+ * Formatea una fecha ISO "YYYY-MM-DD" para mostrar en UI (sin Date object).
  */
-export function formatMxDate(d: Date | string): string {
-  const date = typeof d === "string" ? new Date(d) : d;
-  return new Intl.DateTimeFormat("es-MX", {
-    timeZone: TZ,
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  }).format(date);
-}
-
-/**
- * Formatea una hora (ej "14:30") con zona México.
- */
-export function formatMxTime(d: Date | string): string {
-  const date = typeof d === "string" ? new Date(d) : d;
-  return new Intl.DateTimeFormat("es-MX", {
-    timeZone: TZ,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(date);
+export function formatDateMx(iso: string): string {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return iso;
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  const tempDate = new Date(Date.UTC(y, m - 1, d));
+  const dias = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+  const meses = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+  return `${dias[tempDate.getUTCDay()]} ${d} ${meses[m - 1]}`;
 }
 
 // ═══════════════════════════════════════════════════════════════
 // FUNCIONES DE DATA (sin cambios mayores)
 // ═══════════════════════════════════════════════════════════════
 
-/**
- * Plantilla de trabajo de un día para un negocio.
- */
 export async function getShiftsForDay(
   businessId: string,
   dateIso: string
@@ -131,13 +106,7 @@ export async function getShiftsForDay(
   const shifts = await prisma.scheduledShift.findMany({
     where: { businessId, date: day },
     include: {
-      user: {
-        select: {
-          id: true,
-          fullName: true,
-          jobTitle: true,
-        },
-      },
+      user: { select: { id: true, fullName: true, jobTitle: true } },
     },
     orderBy: [{ startTime: "asc" }, { createdAt: "asc" }],
   });
@@ -190,18 +159,9 @@ export async function getCandidateUsersForBusiness(businessId: string) {
   const direct = await prisma.user.findMany({
     where: {
       isActive: true,
-      OR: [
-        { businessId },
-        { primaryBusinessId: businessId },
-      ],
+      OR: [{ businessId }, { primaryBusinessId: businessId }],
     },
-    select: {
-      id: true,
-      fullName: true,
-      username: true,
-      jobTitle: true,
-      role: true,
-    },
+    select: { id: true, fullName: true, username: true, jobTitle: true, role: true },
     orderBy: { fullName: "asc" },
   });
 
@@ -209,20 +169,9 @@ export async function getCandidateUsersForBusiness(businessId: string) {
     where: {
       isActive: true,
       businessAccess: { some: { businessId } },
-      NOT: {
-        OR: [
-          { businessId },
-          { primaryBusinessId: businessId },
-        ],
-      },
+      NOT: { OR: [{ businessId }, { primaryBusinessId: businessId }] },
     },
-    select: {
-      id: true,
-      fullName: true,
-      username: true,
-      jobTitle: true,
-      role: true,
-    },
+    select: { id: true, fullName: true, username: true, jobTitle: true, role: true },
     orderBy: { fullName: "asc" },
   });
 
@@ -236,7 +185,6 @@ export async function getCandidateUsersForBusiness(businessId: string) {
   return all;
 }
 
-/** Reconcilia turnos pasados: los PLANNED de ayer sin WorkDay pasan a ABSENT. */
 export async function reconcilePastShifts(businessId: string) {
   const todayIso = isoDate();
   const today = dateOnly(todayIso);

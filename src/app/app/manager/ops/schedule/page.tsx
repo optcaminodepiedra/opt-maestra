@@ -10,6 +10,7 @@ import {
   currentWeekMondayIso,
   isoDate,
   dateOnly,
+  formatDateMx,
   getShiftsForWeek,
   getCandidateUsersForBusiness,
 } from "@/lib/schedule";
@@ -102,9 +103,10 @@ export default async function SchedulePage({
             </Link>
           </Button>
           <div className="text-sm font-medium min-w-[180px] text-center">
-            {dateOnly(weekStart).toLocaleDateString("es-MX", { day: "numeric", month: "short" })}
+            {/* ↓↓↓ FIX: usar formatDateMx en vez de toLocaleDateString */}
+            {formatDateMx(weekStart)}
             {" – "}
-            {dateOnly(weekEnd).toLocaleDateString("es-MX", { day: "numeric", month: "short" })}
+            {formatDateMx(weekEnd)}
           </div>
           <Button variant="outline" size="sm" asChild>
             <Link href={`/app/manager/ops/schedule?businessId=${selectedBusinessId}&week=${nextWeek}`}>
