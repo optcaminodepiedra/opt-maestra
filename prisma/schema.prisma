@@ -77,6 +77,11 @@ enum PrintJobType {
   OTHER
 }
 
+enum ModifierSelectionMode {
+  SINGLE
+  MULTIPLE
+}
+
 model Business {
   id        String   @id @default(cuid())
   name      String   @unique
@@ -107,6 +112,7 @@ model Business {
   menuItems        MenuItem[]        @relation("BusinessMenuItems")
   restaurantOrders RestaurantOrder[] @relation("BusinessRestaurantOrders")
   restaurantAreas RestaurantArea[] @relation("BusinessRestaurantAreas")
+    modifierGroups MenuModifierGroup[] @relation("BusinessModifierGroups")
 
   inventoryItems InventoryItem[]
 inventoryMovesOrigin       InventoryMovement[] @relation("InventoryMovementOrigin")
@@ -493,6 +499,9 @@ model MenuItem {
 
   cashpointId String?
   cashpoint   Cashpoint? @relation(fields: [cashpointId], references: [id])
+    imageUrl    String?
+  description String?
+  isFeatured  Boolean @default(false)
 
   name       String
   category   String
@@ -509,6 +518,8 @@ model MenuItem {
 
   business   Business              @relation("BusinessMenuItems", fields: [businessId], references: [id])
   orderItems RestaurantOrderItem[]
+  
+    modifierGroups MenuItemModifierGroup[]
 
   @@index([businessId, isActive])
   @@index([businessId, category])
@@ -550,6 +561,7 @@ model RestaurantOrderItem {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
+  modifiers Json?    // [{ name, priceCents, groupId }, ...]
   order    RestaurantOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
   menuItem MenuItem        @relation(fields: [menuItemId], references: [id])
 
@@ -1335,4 +1347,56 @@ model PrintJob {
   @@index([status, createdAt])
   @@index([businessId, status])
   @@index([printerId, status])
+}
+
+model MenuModifierGroup {
+  id            String                @id @default(cuid())
+  businessId    String
+  business      Business              @relation("BusinessModifierGroups", fields: [businessId], references: [id], onDelete: Cascade)
+
+  name          String
+  selectionMode ModifierSelectionMode @default(SINGLE)
+  isRequired    Boolean               @default(false)
+  minSelections Int                   @default(0)
+  maxSelections Int?
+  sortOrder     Int                   @default(0)
+
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  modifiers     MenuModifier[]
+  items         MenuItemModifierGroup[]
+
+  @@index([businessId])
+}
+
+model MenuModifier {
+  id          String   @id @default(cuid())
+  groupId     String
+  group       MenuModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  name        String
+  priceCents  Int      @default(0)
+  isDefault   Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([groupId])
+}
+
+model MenuItemModifierGroup {
+  id              String   @id @default(cuid())
+  menuItemId      String
+  modifierGroupId String
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  menuItem        MenuItem          @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  modifierGroup   MenuModifierGroup @relation(fields: [modifierGroupId], references: [id], onDelete: Cascade)
+
+  @@unique([menuItemId, modifierGroupId])
+  @@index([menuItemId])
 }
