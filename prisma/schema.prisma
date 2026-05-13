@@ -292,6 +292,9 @@ model Sale {
   importBatchId String?
   importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
 
+    externalSource String?   // "softrestaurant", "manual", etc.
+  externalFolio  String?   // Folio único del sistema origen
+
   @@index([businessId, createdAt])
 }
 
@@ -310,6 +313,9 @@ model Expense {
 
   importBatchId String?
   importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
+
+  externalSource String?
+  externalFolio  String?
 
   accountsPayables AccountsPayable[] @relation("APExpense")
 
@@ -513,6 +519,8 @@ model MenuItem {
   printGroup String?      // ej: "Parrilla", "Fríos", "Barra principal"
   sortOrder  Int         @default(0)
 
+  externalCode String?   // Ej: "01240" (clave SoftRestaurant)
+  
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
