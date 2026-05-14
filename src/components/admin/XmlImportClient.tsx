@@ -2,23 +2,27 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   Upload, X, Check, AlertCircle, Loader2,
-  FileCheck, FilePlus, FileX,
+  FileCheck, FilePlus, FileX, CloudUpload,
 } from "lucide-react";
 
 type Props = {
   businessId: string;
   businessName: string;
+  supabaseUrl: string;
+  supabaseAnonKey: string;
 };
 
 type FileItem = {
   file: File;
-  status: "pending" | "ready" | "error";
+  status: "pending" | "ready" | "uploading" | "uploaded" | "error";
   error?: string;
+  storagePath?: string;
 };
 
 type ImportSummary = {
@@ -44,23 +48,28 @@ type ImportResult = {
   };
 };
 
-// ═══════════════════════════════════════════════════════════════
-// Sube UN archivo por request al route handler /api/upload-xml.
-// Route handlers de Next.js NO tienen el límite de 4.5MB de Server
-// Actions. Pueden recibir hasta ~50MB vía multipart/form-data.
-// ═══════════════════════════════════════════════════════════════
+const STORAGE_BUCKET = "xml-imports";
 
-export function XmlImportClient({ businessId, businessName }: Props) {
+export function XmlImportClient({
+  businessId,
+  businessName,
+  supabaseUrl,
+  supabaseAnonKey,
+}: Props) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [files, setFiles] = useState<FileItem[]>([]);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<{
+    phase: "upload" | "process";
     current: number;
     total: number;
     filename: string;
   } | null>(null);
+
+  // Cliente Supabase anon — solo upload, no DB
+  const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
   function handleFiles(fileList: FileList | null) {
     if (!fileList) return;
@@ -86,14 +95,42 @@ export function XmlImportClient({ businessId, businessName }: Props) {
     setProgress(null);
   }
 
-  async function uploadFile(file: File): Promise<ImportResult> {
-    const formData = new FormData();
-    formData.append("businessId", businessId);
-    formData.append("file_0", file);
+  /**
+   * Sube un archivo a Supabase Storage y devuelve el path.
+   */
+  async function uploadToStorage(file: File): Promise<string> {
+    // Path: businessId/timestamp_filename
+    const timestamp = Date.now();
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const storagePath = `${businessId}/${timestamp}_${safeName}`;
 
+    const { data, error } = await supabase.storage
+      .from(STORAGE_BUCKET)
+      .upload(storagePath, file, {
+        contentType: "application/xml",
+        upsert: false,
+      });
+
+    if (error) {
+      throw new Error(`Upload Storage: ${error.message}`);
+    }
+
+    return data.path;
+  }
+
+  /**
+   * Llama al route handler con las refs de Storage.
+   */
+  async function callRouteHandler(
+    uploadedFiles: Array<{ filename: string; storagePath: string }>
+  ): Promise<ImportResult> {
     const res = await fetch("/api/upload-xml", {
       method: "POST",
-      body: formData,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        businessId,
+        files: uploadedFiles,
+      }),
     });
 
     if (!res.ok) {
@@ -114,7 +151,7 @@ export function XmlImportClient({ businessId, businessName }: Props) {
     setResult(null);
     setProgress(null);
 
-    const readyFiles = files.filter((f) => f.status === "ready");
+    const readyFiles = files.filter((f) => f.status === "ready" || f.status === "uploaded");
     if (readyFiles.length === 0) {
       setError("No hay archivos válidos para importar");
       return;
@@ -122,48 +159,55 @@ export function XmlImportClient({ businessId, businessName }: Props) {
 
     start(async () => {
       try {
-        const allSummaries: ImportSummary[] = [];
-        let lastBatchId = "";
+        // FASE 1: Subir archivos a Supabase Storage
+        const uploadedRefs: Array<{ filename: string; storagePath: string }> = [];
 
         for (let i = 0; i < readyFiles.length; i++) {
           const fi = readyFiles[i];
           setProgress({
+            phase: "upload",
             current: i + 1,
             total: readyFiles.length,
             filename: fi.file.name,
           });
 
           try {
-            const res = await uploadFile(fi.file);
-            allSummaries.push(...res.summaries);
-            lastBatchId = res.batchId;
+            const path = await uploadToStorage(fi.file);
+            uploadedRefs.push({ filename: fi.file.name, storagePath: path });
+
+            // Marcar archivo como uploaded
+            setFiles((prev) =>
+              prev.map((p) =>
+                p.file === fi.file ? { ...p, status: "uploaded", storagePath: path } : p
+              )
+            );
           } catch (err: any) {
-            allSummaries.push({
-              filename: fi.file.name,
-              fileType: "unknown",
-              totalRecords: 0,
-              imported: 0,
-              skipped: 0,
-              errors: 1,
-              errorDetails: [{ row: 0, message: err.message ?? "Error de red" }],
-            });
+            setFiles((prev) =>
+              prev.map((p) =>
+                p.file === fi.file
+                  ? { ...p, status: "error", error: err.message?.slice(0, 80) }
+                  : p
+              )
+            );
+            console.error(`Error subiendo ${fi.file.name}:`, err);
           }
         }
 
-        const totals = {
-          totalRecords: allSummaries.reduce((s, x) => s + x.totalRecords, 0),
-          imported: allSummaries.reduce((s, x) => s + x.imported, 0),
-          skipped: allSummaries.reduce((s, x) => s + x.skipped, 0),
-          errors: allSummaries.reduce((s, x) => s + x.errors, 0),
-        };
+        if (uploadedRefs.length === 0) {
+          throw new Error("Ningún archivo se pudo subir a Storage");
+        }
 
-        setResult({
-          batchId: lastBatchId,
-          businessId,
-          totalFiles: readyFiles.length,
-          summaries: allSummaries,
-          totals,
+        // FASE 2: Llamar al route handler para procesar
+        setProgress({
+          phase: "process",
+          current: uploadedRefs.length,
+          total: uploadedRefs.length,
+          filename: `Procesando ${uploadedRefs.length} archivos en servidor...`,
         });
+
+        const res = await callRouteHandler(uploadedRefs);
+
+        setResult(res);
         setProgress(null);
         router.refresh();
       } catch (err: any) {
@@ -174,6 +218,7 @@ export function XmlImportClient({ businessId, businessName }: Props) {
   }
 
   const readyCount = files.filter((f) => f.status === "ready").length;
+  const uploadedCount = files.filter((f) => f.status === "uploaded").length;
   const totalSize = files.reduce((s, f) => s + f.file.size, 0);
   const totalSizeMB = totalSize / (1024 * 1024);
 
@@ -190,9 +235,8 @@ export function XmlImportClient({ businessId, businessName }: Props) {
             Destino: <strong>{businessName}</strong>
           </p>
           <p className="text-xs text-muted-foreground">
-            Sube uno o varios archivos .xml de SoftRestaurant. Cada archivo se sube
-            individualmente al servidor (soporta hasta ~50MB por archivo).
-            El sistema detecta automáticamente el tipo y previene duplicados por folio.
+            Los archivos se suben primero a almacenamiento seguro y luego se procesan.
+            Soporta archivos individuales de hasta 50 MB. Sin límite total.
           </p>
 
           <label
@@ -221,7 +265,7 @@ export function XmlImportClient({ businessId, businessName }: Props) {
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm">
-                Archivos ({files.length}) · {readyCount} listo{readyCount !== 1 ? "s" : ""}
+                Archivos ({files.length}) · {readyCount + uploadedCount} listo{readyCount + uploadedCount !== 1 ? "s" : ""}
                 <span className="text-xs text-muted-foreground ml-2">
                   ({totalSizeMB.toFixed(2)} MB total)
                 </span>
@@ -236,6 +280,8 @@ export function XmlImportClient({ businessId, businessName }: Props) {
               {files.map((f, i) => (
                 <div key={i} className="flex items-center gap-2 p-3 text-sm">
                   {f.status === "ready" && <FileCheck className="w-4 h-4 text-green-600" />}
+                  {f.status === "uploading" && <Loader2 className="w-4 h-4 animate-spin text-blue-500" />}
+                  {f.status === "uploaded" && <CloudUpload className="w-4 h-4 text-blue-600" />}
                   {f.status === "error" && <FileX className="w-4 h-4 text-red-600" />}
                   <span className="flex-1 truncate">{f.file.name}</span>
                   <span className="text-xs text-muted-foreground">
@@ -280,7 +326,9 @@ export function XmlImportClient({ businessId, businessName }: Props) {
           <CardContent className="p-4 space-y-2">
             <div className="flex items-center justify-between">
               <p className="text-sm font-medium text-blue-700">
-                Procesando archivo {progress.current} de {progress.total}
+                {progress.phase === "upload"
+                  ? `Subiendo archivo ${progress.current} de ${progress.total} a Storage`
+                  : `Procesando en servidor...`}
               </p>
               <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
             </div>

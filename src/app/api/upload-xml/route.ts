@@ -3,22 +3,17 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { parseVfpXml, type ParsedVfpFile, type VfpFileType } from "@/lib/xml-parser";
+import { getSupabaseAdmin } from "@/lib/supabase-admin";
 
 const ADMIN_ROLES = ["MASTER_ADMIN", "OWNER", "SUPERIOR"];
 const EXTERNAL_SOURCE = "softrestaurant";
+const STORAGE_BUCKET = "xml-imports";
 
-// ═══════════════════════════════════════════════════════════════
-// CONFIGURACIÓN
-// ═══════════════════════════════════════════════════════════════
-// maxDuration = 60s (límite Vercel Free)
-// Usamos createMany() en bulk para procesar 1000+ registros en ~3s
-// en vez de inserts secuenciales que tardan 50-60s y dan timeout.
-// ═══════════════════════════════════════════════════════════════
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 export const runtime = "nodejs";
 
-const BATCH_SIZE = 500; // Lote de createMany — Postgres aguanta bien hasta 1000
+const BATCH_SIZE = 500;
 
 type ImportSummary = {
   filename: string;
@@ -43,6 +38,13 @@ type ImportResult = {
   };
 };
 
+// ═══════════════════════════════════════════════════════════════
+// POST /api/upload-xml
+//
+// Recibe JSON con: { businessId, files: [{ filename, storagePath }] }
+// El cliente YA subió los archivos al bucket de Supabase Storage.
+// El server los descarga internamente (sin pasar por Vercel body limit).
+// ═══════════════════════════════════════════════════════════════
 export async function POST(req: NextRequest) {
   const t0 = Date.now();
   console.log("[upload-xml] === POST INICIO ===");
@@ -60,20 +62,25 @@ export async function POST(req: NextRequest) {
 
   const userId = (session.user as any).id as string;
 
-  // ─── 2. Parsear multipart/form-data ──────────────────────────
-  let formData: FormData;
+  // ─── 2. Parsear JSON body ────────────────────────────────────
+  let body: any;
   try {
-    formData = await req.formData();
+    body = await req.json();
   } catch (err: any) {
     return NextResponse.json(
-      { error: `Error parseando formData: ${err.message}` },
+      { error: `Body JSON inválido: ${err.message}` },
       { status: 400 }
     );
   }
 
-  const businessId = formData.get("businessId") as string | null;
+  const businessId: string = body.businessId;
+  const fileRefs: Array<{ filename: string; storagePath: string }> = body.files;
+
   if (!businessId) {
     return NextResponse.json({ error: "Falta businessId" }, { status: 400 });
+  }
+  if (!Array.isArray(fileRefs) || fileRefs.length === 0) {
+    return NextResponse.json({ error: "Falta files (array)" }, { status: 400 });
   }
 
   // ─── 3. Validar negocio ──────────────────────────────────────
@@ -85,23 +92,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Negocio no encontrado" }, { status: 404 });
   }
 
-  // ─── 4. Obtener archivos del FormData ────────────────────────
-  const files: File[] = [];
-  for (const [key, value] of formData.entries()) {
-    if (key.startsWith("file") && value instanceof File) {
-      files.push(value);
-    }
-  }
+  console.log(`[upload-xml] Procesando ${fileRefs.length} archivos para ${business.name}`);
 
-  if (files.length === 0) {
-    return NextResponse.json({ error: "No se enviaron archivos" }, { status: 400 });
-  }
-
-  console.log(`[upload-xml] Recibidos ${files.length} archivos para ${business.name}`);
-
-  // ─── 5. Procesar archivos ────────────────────────────────────
+  // ─── 4. Descargar y procesar ─────────────────────────────────
   try {
-    const result = await processFiles(businessId, userId, files);
+    const result = await processFiles(businessId, userId, fileRefs);
     const dt = ((Date.now() - t0) / 1000).toFixed(1);
     console.log(`[upload-xml] === COMPLETADO en ${dt}s ===`);
     return NextResponse.json(result);
@@ -116,28 +111,44 @@ export async function POST(req: NextRequest) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// PROCESAMIENTO DE ARCHIVOS
+// PROCESAMIENTO
 // ═══════════════════════════════════════════════════════════════
 
 async function processFiles(
   businessId: string,
   userId: string,
-  files: File[]
+  fileRefs: Array<{ filename: string; storagePath: string }>
 ): Promise<ImportResult> {
-  // Parsear todos los archivos
-  const parsedFiles: Array<{ filename: string; parsed: ParsedVfpFile }> = [];
-  for (const file of files) {
+  const supabase = getSupabaseAdmin();
+
+  // Descargar todos los archivos desde Supabase Storage
+  const parsedFiles: Array<{ filename: string; storagePath: string; parsed: ParsedVfpFile }> = [];
+
+  for (const ref of fileRefs) {
     const t = Date.now();
     try {
-      const arrayBuffer = await file.arrayBuffer();
+      const { data, error } = await supabase.storage
+        .from(STORAGE_BUCKET)
+        .download(ref.storagePath);
+
+      if (error || !data) {
+        throw new Error(error?.message ?? "No se pudo descargar");
+      }
+
+      const arrayBuffer = await data.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
       const parsed = parseVfpXml(buffer);
-      parsedFiles.push({ filename: file.name, parsed });
-      console.log(`[upload-xml] Parseado ${file.name} (${parsed.fileType}, ${parsed.totalRecords} regs) en ${Date.now() - t}ms`);
+
+      parsedFiles.push({ filename: ref.filename, storagePath: ref.storagePath, parsed });
+      console.log(
+        `[upload-xml] Descargado+parseado ${ref.filename} ` +
+        `(${parsed.fileType}, ${parsed.totalRecords} regs) en ${Date.now() - t}ms`
+      );
     } catch (err: any) {
-      console.error(`[upload-xml] Error parseando ${file.name}:`, err.message);
+      console.error(`[upload-xml] Error con ${ref.filename}:`, err.message);
       parsedFiles.push({
-        filename: file.name,
+        filename: ref.filename,
+        storagePath: ref.storagePath,
         parsed: {
           tableName: "error",
           fileType: "unknown",
@@ -151,22 +162,24 @@ async function processFiles(
 
   const totalRecords = parsedFiles.reduce((s, f) => s + f.parsed.totalRecords, 0);
 
-  // Crear batch maestro
+  // Crear batch
   const batch = await prisma.importBatch.create({
     data: {
       entityType: "SALES",
       businessId,
-      filename: files.map((f) => f.name).join(", ").slice(0, 500),
+      filename: fileRefs.map((f) => f.filename).join(", ").slice(0, 500),
       totalRows: totalRecords,
       status: "PROCESSING",
       createdById: userId,
     },
   });
 
-  // Orden de procesamiento
   const order: VfpFileType[] = [
-    "cheques", "cheqdet", "movtoscaja", "turnos", "cancela",
-    "cuentasporcobrar", "movsinv", "compras", "gastos", "hotelmovtos",
+    "cheques", "cheqdet", "chequespagos", "movtoscaja", "turnos", "cancela",
+    "cuentasporcobrar", "cuentasporcobrarpagos", "movsinv", "movtosalmacen",
+    "compras", "comprasmovtos", "gastos", "gastosmovtos",
+    "facturas", "facturasmovtos", "ordenescompras", "ordenescomprasmov",
+    "hotelmovtos", "bitacoratarjetacredito",
   ];
 
   const sortedFiles = [...parsedFiles].sort((a, b) => {
@@ -175,7 +188,7 @@ async function processFiles(
     return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
   });
 
-  // Cashpoint fallback (cargar una sola vez)
+  // Cashpoint fallback
   let firstCashpoint = await prisma.cashpoint.findFirst({
     where: { businessId },
     select: { id: true },
@@ -206,6 +219,7 @@ async function processFiles(
           );
           break;
         default:
+          // Reconocido pero no se importa todavía
           summary = {
             filename, fileType: parsed.fileType,
             totalRecords: parsed.totalRecords,
@@ -214,11 +228,14 @@ async function processFiles(
               row: 0,
               message: parsed.fileType === "unknown"
                 ? `Tipo no reconocido (${parsed.tableName})`
-                : `${parsed.totalRecords} registros disponibles pero no se importan en esta versión.`,
+                : `Tipo "${parsed.fileType}" reconocido — ${parsed.totalRecords} registros disponibles pero no se importan a tablas específicas en esta versión.`,
             }],
           };
       }
-      console.log(`[upload-xml] Importado ${filename}: ${summary.imported} ok, ${summary.skipped} skip, ${summary.errors} err (${Date.now() - t}ms)`);
+      console.log(
+        `[upload-xml] Importado ${filename}: ` +
+        `${summary.imported} ok, ${summary.skipped} skip, ${summary.errors} err (${Date.now() - t}ms)`
+      );
     } catch (err: any) {
       console.error(`[upload-xml] Falló ${filename}:`, err.message);
       summary = {
@@ -229,6 +246,16 @@ async function processFiles(
       };
     }
     summaries.push(summary);
+  }
+
+  // Cleanup: borrar archivos del bucket después de procesar
+  // (opcional pero recomendado para no acumular basura)
+  for (const f of parsedFiles) {
+    try {
+      await supabase.storage.from(STORAGE_BUCKET).remove([f.storagePath]);
+    } catch {
+      // ignorar errores de cleanup
+    }
   }
 
   const totals = {
@@ -252,17 +279,14 @@ async function processFiles(
   return {
     batchId: batch.id,
     businessId,
-    totalFiles: files.length,
+    totalFiles: fileRefs.length,
     summaries,
     totals,
   };
 }
 
 // ═══════════════════════════════════════════════════════════════
-// IMPORTADOR CHEQUES — versión FAST con createMany
-// ═══════════════════════════════════════════════════════════════
-// Antes: 1,022 inserts secuenciales = ~51s → TIMEOUT
-// Ahora: 1 query de folios existentes + 2-3 createMany de 500 = ~3s
+// IMPORTADORES (mismo código que antes con createMany)
 // ═══════════════════════════════════════════════════════════════
 
 async function importChequesFast(
@@ -278,7 +302,6 @@ async function importChequesFast(
   let errors = 0;
   const errorDetails: Array<{ row: number; message: string }> = [];
 
-  // 1. Cargar folios existentes (UN SOLO query)
   const existing = await prisma.sale.findMany({
     where: { businessId, externalSource: EXTERNAL_SOURCE } as any,
     select: { externalFolio: true } as any,
@@ -287,7 +310,6 @@ async function importChequesFast(
     (existing as any[]).map((s) => s.externalFolio).filter(Boolean)
   );
 
-  // 2. Procesar TODO en memoria primero (sin tocar BD)
   const toInsert: any[] = [];
 
   for (let i = 0; i < parsed.records.length; i++) {
@@ -358,7 +380,7 @@ async function importChequesFast(
         externalFolio: folio,
       });
 
-      existingFolios.add(folio); // proteger contra duplicados en el mismo archivo
+      existingFolios.add(folio);
     } catch (err: any) {
       errors++;
       errorDetails.push({
@@ -368,18 +390,16 @@ async function importChequesFast(
     }
   }
 
-  // 3. Bulk insert en lotes de BATCH_SIZE
   for (let i = 0; i < toInsert.length; i += BATCH_SIZE) {
     const chunk = toInsert.slice(i, i + BATCH_SIZE);
     try {
       const result = await prisma.sale.createMany({
         data: chunk as any,
-        skipDuplicates: true, // si la UNIQUE constraint dispara, no rompe
+        skipDuplicates: true,
       });
       imported += result.count;
     } catch (err: any) {
-      // Si falla el batch entero, intentar uno por uno para recuperar máximo posible
-      console.error(`[upload-xml] Batch falló, reintentando individual:`, err.message);
+      console.error(`[upload-xml] Batch falló:`, err.message);
       for (const item of chunk) {
         try {
           await prisma.sale.create({ data: item });
@@ -402,10 +422,6 @@ async function importChequesFast(
     errorDetails: errorDetails.slice(0, 50),
   };
 }
-
-// ═══════════════════════════════════════════════════════════════
-// IMPORTADOR MOVIMIENTOS CAJA — versión FAST con createMany
-// ═══════════════════════════════════════════════════════════════
 
 async function importMovtosCajaFast(
   batchId: string,
@@ -504,7 +520,6 @@ async function importMovtosCajaFast(
     }
   }
 
-  // Bulk insert
   for (let i = 0; i < toInsert.length; i += BATCH_SIZE) {
     const chunk = toInsert.slice(i, i + BATCH_SIZE);
     try {

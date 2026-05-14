@@ -40,16 +40,42 @@ export default async function XmlImportPage({
     );
   }
 
+  // Variables de entorno públicas para que el cliente pueda subir a Storage
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return (
+      <div className="p-6 max-w-2xl mx-auto">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-red-600">
+              <ShieldAlert className="w-5 h-5" /> Configuración incompleta
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm space-y-2">
+            <p>Faltan variables de entorno en Vercel:</p>
+            <ul className="list-disc ml-5 text-muted-foreground">
+              {!supabaseUrl && <li><code>NEXT_PUBLIC_SUPABASE_URL</code></li>}
+              {!supabaseAnonKey && <li><code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code></li>}
+            </ul>
+            <p className="text-muted-foreground">
+              Configura en Vercel → Settings → Environment Variables.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   const sp = await searchParams;
   const businessId = sp.businessId;
 
-  // Lista de negocios para seleccionar
   const businesses = await prisma.business.findMany({
     select: { id: true, name: true },
     orderBy: { name: "asc" },
   });
 
-  // Si no hay businessId, mostrar selector
   if (!businessId) {
     return (
       <div className="p-6 max-w-3xl mx-auto space-y-4">
@@ -118,19 +144,22 @@ export default async function XmlImportPage({
         </Link>
       </Button>
 
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-2">
-            <FileCode className="w-7 h-7 text-blue-500" />
-            Importar XMLs SoftRestaurant
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Subiendo a: <strong>{business.name}</strong>
-          </p>
-        </div>
+      <div>
+        <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-2">
+          <FileCode className="w-7 h-7 text-blue-500" />
+          Importar XMLs SoftRestaurant
+        </h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Subiendo a: <strong>{business.name}</strong>
+        </p>
       </div>
 
-      <XmlImportClient businessId={business.id} businessName={business.name} />
+      <XmlImportClient
+        businessId={business.id}
+        businessName={business.name}
+        supabaseUrl={supabaseUrl}
+        supabaseAnonKey={supabaseAnonKey}
+      />
     </div>
   );
 }

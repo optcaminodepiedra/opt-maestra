@@ -1,26 +1,14 @@
 /**
  * Parser XML para archivos VFPData (SoftRestaurant / Visual FoxPro export).
  *
- * Características:
- * - Detecta encoding Windows-1252 automáticamente
- * - Quita el bloque <xsd:schema> (definición que no contiene datos)
- * - Convierte cada registro a objeto JS con tipos correctos
- * - Devuelve {tableName, records} para que el caller sepa qué hacer
- *
- * Tipos detectados:
- * - dateTime: Date | null
- * - date: string YYYY-MM-DD | null
- * - decimal: number | null
- * - integer: number | null
- * - boolean: boolean
- * - string: string
+ * Versión 2: reconoce más tipos de archivos (curtemp ambiguo, chequespagos, etc.)
  */
 
 import { XMLParser } from "fast-xml-parser";
 
 export type ParsedVfpFile = {
-  tableName: string;          // ej: "curcheques", "curtemp"
-  fileType: VfpFileType;      // ej: "cheques", "gastos"
+  tableName: string;
+  fileType: VfpFileType;
   records: Record<string, any>[];
   totalRecords: number;
   schemaFields: Array<{ name: string; type: VfpFieldType }>;
@@ -29,15 +17,23 @@ export type ParsedVfpFile = {
 export type VfpFileType =
   | "cheques"
   | "cheqdet"
+  | "chequespagos"
+  | "cancela"
   | "movtoscaja"
   | "turnos"
-  | "cancela"
   | "movsinv"
+  | "movtosalmacen"
   | "cuentasporcobrar"
+  | "cuentasporcobrarpagos"
   | "compras"
+  | "comprasmovtos"
   | "gastos"
-  | "hotelmovtos"
+  | "gastosmovtos"
   | "facturas"
+  | "facturasmovtos"
+  | "ordenescompras"
+  | "ordenescomprasmov"
+  | "hotelmovtos"
   | "bitacoratarjetacredito"
   | "unknown";
 
@@ -50,28 +46,62 @@ export type VfpFieldType =
   | "boolean";
 
 /**
- * Detecta el tipo de archivo VFP basándose en el tagName de los records.
- * Cada archivo tiene un patrón distintivo.
+ * Detecta el tipo de archivo VFP basándose en:
+ *  1. El tableName (prefijo "cur") — método principal
+ *  2. Si es "curtemp" (genérico), inspecciona los campos
  */
 function detectFileType(tableName: string, fieldNames: string[]): VfpFileType {
-  // Algunos archivos usan "curtemp" genérico — distinguir por campos
-  if (tableName === "curcheques") return "cheques";
-  if (tableName === "curcheqdet") return "cheqdet";
-  if (tableName === "curmovtoscaja") return "movtoscaja";
-  if (tableName === "curturnos") return "turnos";
-  if (tableName === "curcancela") return "cancela";
-  if (tableName === "curcuentasporcobrar") return "cuentasporcobrar";
+  const lower = tableName.toLowerCase();
 
-  // tableName "curtemp" puede ser varios — detectar por campos
-  if (tableName === "curtemp") {
-    if (fieldNames.includes("proveedor") && fieldNames.includes("foliofactura")) return "compras";
+  // ─── Detección directa por tableName ──────────────────────────
+  const directMap: Record<string, VfpFileType> = {
+    "curcheques": "cheques",
+    "curcheqdet": "cheqdet",
+    "curchequespagos": "chequespagos",
+    "curcancela": "cancela",
+    "curmovtoscaja": "movtoscaja",
+    "curturnos": "turnos",
+    "curmovsinv": "movsinv",
+    "curmovtosalmacen": "movtosalmacen",
+    "curcuentasporcobrar": "cuentasporcobrar",
+    "curcuentasporcobrarpagos": "cuentasporcobrarpagos",
+    "curcompras": "compras",
+    "curcomprasmovtos": "comprasmovtos",
+    "curgastos": "gastos",
+    "curgastosmovtos": "gastosmovtos",
+    "curfacturas": "facturas",
+    "curfacturasmovtos": "facturasmovtos",
+    "curordenescompras": "ordenescompras",
+    "curordenescomprasmov": "ordenescomprasmov",
+    "curhotelmovtos": "hotelmovtos",
+    "curbitacoratarjetacredito": "bitacoratarjetacredito",
+  };
+
+  if (directMap[lower]) return directMap[lower];
+
+  // ─── curtemp es ambiguo, hay que mirar los campos ────────────
+  if (lower === "curtemp") {
+    // compras / comprasmovtos
+    if (fieldNames.includes("idproveedor") && fieldNames.includes("foliofactura")) return "compras";
+    if (fieldNames.includes("idproveedor") && fieldNames.includes("clave") && fieldNames.includes("cantidad")) return "comprasmovtos";
+
+    // gastos / gastosmovtos
     if (fieldNames.includes("idcuentacontable") && fieldNames.includes("descuento")) return "gastos";
-    if (fieldNames.includes("habitacion") && fieldNames.includes("subtotal")) return "hotelmovtos";
-    if (fieldNames.includes("invfisico") && fieldNames.includes("insumo")) return "movsinv";
-  }
+    if (fieldNames.includes("idcuentacontable") && fieldNames.includes("foliogasto")) return "gastosmovtos";
 
-  if (fieldNames.includes("foliofactura") && fieldNames.includes("subtotal")) return "facturas";
-  if (fieldNames.includes("numerotarjeta") && fieldNames.includes("autorizacion")) return "bitacoratarjetacredito";
+    // hotelmovtos
+    if (fieldNames.includes("habitacion") && fieldNames.includes("subtotal")) return "hotelmovtos";
+
+    // movsinv
+    if (fieldNames.includes("invfisico") && fieldNames.includes("insumo")) return "movsinv";
+
+    // ordenescompras / ordenescomprasmov
+    if (fieldNames.includes("foliooc") && fieldNames.includes("idproveedor")) return "ordenescompras";
+    if (fieldNames.includes("foliooc") && fieldNames.includes("clave")) return "ordenescomprasmov";
+
+    // movtosalmacen
+    if (fieldNames.includes("almacen") && fieldNames.includes("idmovimientoalmacen")) return "movtosalmacen";
+  }
 
   return "unknown";
 }
@@ -86,14 +116,13 @@ function parseSchema(xmlContent: string): {
   const fields: Array<{ name: string; type: VfpFieldType }> = [];
   let tableName = "unknown";
 
-  // Buscar el primer <xsd:element name="X" minOccurs="0" maxOccurs="unbounded">
-  // que define el row
-  const rowMatch = xmlContent.match(/<xsd:element\s+name="([a-zA-Z]+)"\s+minOccurs="0"\s+maxOccurs="unbounded">/);
+  const rowMatch = xmlContent.match(
+    /<xsd:element\s+name="([a-zA-Z]+)"\s+minOccurs="0"\s+maxOccurs="unbounded">/
+  );
   if (rowMatch) tableName = rowMatch[1];
 
-  // Capturar todos los <xsd:element name="campo" type="xsd:TIPO"/>
-  // o <xsd:element name="campo">...<xsd:restriction base="xsd:TIPO">
-  const elementRegex = /<xsd:element\s+name="([a-zA-Z0-9_]+)"(?:\s+type="xsd:([a-zA-Z]+)")?\s*(?:\/>|>(?:[\s\S]*?<xsd:restriction\s+base="xsd:([a-zA-Z]+)")?)/g;
+  const elementRegex =
+    /<xsd:element\s+name="([a-zA-Z0-9_]+)"(?:\s+type="xsd:([a-zA-Z]+)")?\s*(?:\/>|>(?:[\s\S]*?<xsd:restriction\s+base="xsd:([a-zA-Z]+)")?)/g;
 
   let match;
   while ((match = elementRegex.exec(xmlContent)) !== null) {
@@ -102,7 +131,6 @@ function parseSchema(xmlContent: string): {
     const restrictionType = match[3];
     const xsdType = directType || restrictionType;
 
-    // Skip los tipos genéricos
     if (fieldName === "VFPData" || fieldName === tableName) continue;
 
     let fieldType: VfpFieldType = "string";
@@ -120,9 +148,6 @@ function parseSchema(xmlContent: string): {
   return { tableName, fields };
 }
 
-/**
- * Convierte un valor string al tipo correcto.
- */
 function castValue(rawValue: any, type: VfpFieldType): any {
   if (rawValue === undefined || rawValue === null || rawValue === "") return null;
   const str = String(rawValue).trim();
@@ -138,14 +163,12 @@ function castValue(rawValue: any, type: VfpFieldType): any {
       return isNaN(num) ? null : num;
 
     case "dateTime":
-      // Formato VFP: "2026-02-01T15:28:53"
       const dt = new Date(str);
       return isNaN(dt.getTime()) ? null : dt;
 
     case "date":
-      // Formato: "2026-02-01"
       if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
-        return str.slice(0, 10); // YYYY-MM-DD como string
+        return str.slice(0, 10);
       }
       return null;
 
@@ -156,34 +179,27 @@ function castValue(rawValue: any, type: VfpFieldType): any {
 }
 
 /**
- * Parsea un buffer de archivo XML VFPData.
- * Auto-detecta encoding Windows-1252 y devuelve estructura limpia.
+ * Parsea un buffer XML VFPData.
  */
 export function parseVfpXml(buffer: Buffer | ArrayBuffer): ParsedVfpFile {
-  // Convertir buffer a string en Windows-1252 (encoding default de VFP)
   let xmlContent: string;
   try {
-    // Intentar Windows-1252 primero
     const decoder = new TextDecoder("windows-1252");
     xmlContent = decoder.decode(buffer as ArrayBuffer);
   } catch {
-    // Fallback a UTF-8
     const decoder = new TextDecoder("utf-8");
     xmlContent = decoder.decode(buffer as ArrayBuffer);
   }
 
-  // Parsear schema (los tipos de los campos)
   const { tableName, fields } = parseSchema(xmlContent);
   const fieldMap = new Map(fields.map((f) => [f.name, f.type]));
 
-  // Quitar el bloque <xsd:schema> para parsear solo los datos
   const dataXml = xmlContent.replace(/<xsd:schema[\s\S]*?<\/xsd:schema>/, "");
 
-  // Parser XML
   const parser = new XMLParser({
     ignoreAttributes: true,
     parseAttributeValue: false,
-    parseTagValue: false, // queremos strings raw para castearlos nosotros
+    parseTagValue: false,
     trimValues: true,
     isArray: (name) => name === tableName,
   });
@@ -195,7 +211,6 @@ export function parseVfpXml(buffer: Buffer | ArrayBuffer): ParsedVfpFile {
     throw new Error(`Error parseando XML: ${err.message}`);
   }
 
-  // VFPData > tableName[] > {fieldName: value}
   const vfpData = parsed.VFPData;
   if (!vfpData) {
     return {
@@ -218,7 +233,6 @@ export function parseVfpXml(buffer: Buffer | ArrayBuffer): ParsedVfpFile {
     };
   }
 
-  // Convertir cada registro a tipos correctos
   const records: Record<string, any>[] = [];
   const arr = Array.isArray(rawRecords) ? rawRecords : [rawRecords];
 
