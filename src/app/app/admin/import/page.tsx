@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Database, History } from "lucide-react";
+import { Database, History, FileCode, ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { ImportWizard } from "@/components/admin/ImportWizard";
 
@@ -44,7 +44,7 @@ export default async function AdminImportPage() {
             Importar data histórica
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Sube CSV o Excel para poblar ventas, gastos, reservaciones, inventario y más
+            Sube CSV, Excel o XML para poblar ventas, gastos, reservaciones, inventario y más
           </p>
         </div>
         <Button variant="outline" size="sm" asChild>
@@ -53,18 +53,46 @@ export default async function AdminImportPage() {
           </Link>
         </Button>
       </div>
-      
-      ```tsx
-<Link
-  href="/app/admin/import/xml"
-  className="block px-3 py-2 hover:bg-muted/30 rounded"
->
-  <span className="text-sm font-medium">XML SoftRestaurant</span>
-  <span className="block text-xs text-muted-foreground">Respaldos VFPData</span>
-</Link>
-```
 
-      <ImportWizard businesses={businesses} />
+      {/* ═══════════════════════════════════════════════════════════════
+          NUEVA TARJETA: Import XML SoftRestaurant (Fase 8F)
+          ═══════════════════════════════════════════════════════════════ */}
+      <Card className="border-blue-300 bg-gradient-to-br from-blue-50 to-indigo-50">
+        <CardContent className="p-4 flex items-start gap-4">
+          <div className="p-3 bg-blue-100 rounded-xl shrink-0">
+            <FileCode className="w-7 h-7 text-blue-600" />
+          </div>
+          <div className="flex-1">
+            <div className="flex items-start justify-between gap-2 mb-1">
+              <h3 className="font-semibold text-base">
+                Importar XMLs de SoftRestaurant
+              </h3>
+              <span className="text-[10px] bg-blue-200 text-blue-800 px-2 py-0.5 rounded-full font-medium uppercase tracking-wide">
+                Nuevo
+              </span>
+            </div>
+            <p className="text-sm text-muted-foreground mb-3">
+              Sube respaldos en formato XML (cheques, gastos, turnos, etc.) con un solo click.
+              Detecta el tipo automáticamente, previene duplicados por folio, y soporta archivos grandes hasta ~50MB.
+            </p>
+            <Button asChild>
+              <Link href="/app/admin/import/xml">
+                Ir a importar XML <ArrowRight className="w-4 h-4 ml-1" />
+              </Link>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ═══════════════════════════════════════════════════════════════
+          Wizard original (CSV / Excel)
+          ═══════════════════════════════════════════════════════════════ */}
+      <div className="border-t pt-4">
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+          Importar desde CSV o Excel
+        </h2>
+        <ImportWizard businesses={businesses} />
+      </div>
     </div>
   );
 }

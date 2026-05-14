@@ -9,7 +9,6 @@ import {
   Upload, X, Check, AlertCircle, Loader2,
   FileCheck, FilePlus, FileX,
 } from "lucide-react";
-import { runXmlImport, type XmlImportResult, type XmlImportSummary } from "@/lib/xml-import.actions";
 
 type Props = {
   businessId: string;
@@ -18,73 +17,62 @@ type Props = {
 
 type FileItem = {
   file: File;
-  base64?: string;
-  base64Bytes?: number;
-  status: "pending" | "loading" | "ready" | "error";
+  status: "pending" | "ready" | "error";
   error?: string;
 };
 
+type ImportSummary = {
+  filename: string;
+  fileType: string;
+  totalRecords: number;
+  imported: number;
+  skipped: number;
+  errors: number;
+  errorDetails: Array<{ row: number; message: string }>;
+};
+
+type ImportResult = {
+  batchId: string;
+  businessId: string;
+  totalFiles: number;
+  summaries: ImportSummary[];
+  totals: {
+    totalRecords: number;
+    imported: number;
+    skipped: number;
+    errors: number;
+  };
+};
+
 // ═══════════════════════════════════════════════════════════════
-// LÍMITES — Vercel Server Actions tienen un límite de ~4.5MB por request
-// Subimos archivos por chunks de ~3MB para tener margen
+// Sube UN archivo por request al route handler /api/upload-xml.
+// Route handlers de Next.js NO tienen el límite de 4.5MB de Server
+// Actions. Pueden recibir hasta ~50MB vía multipart/form-data.
 // ═══════════════════════════════════════════════════════════════
-const MAX_CHUNK_BYTES = 3 * 1024 * 1024; // 3 MB por lote
-const VERCEL_HARD_LIMIT_HUMAN = "4.5 MB por lote";
 
 export function XmlImportClient({ businessId, businessName }: Props) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [files, setFiles] = useState<FileItem[]>([]);
-  const [result, setResult] = useState<XmlImportResult | null>(null);
+  const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [progress, setProgress] = useState<{ current: number; total: number; chunkInfo: string } | null>(null);
+  const [progress, setProgress] = useState<{
+    current: number;
+    total: number;
+    filename: string;
+  } | null>(null);
 
-  function readFileAsBase64(file: File): Promise<{ base64: string; bytes: number }> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const r = reader.result as string;
-        const base64 = r.split(",")[1];
-        resolve({ base64, bytes: base64.length });
-      };
-      reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
-      reader.readAsDataURL(file);
-    });
-  }
-
-  async function handleFiles(fileList: FileList | null) {
+  function handleFiles(fileList: FileList | null) {
     if (!fileList) return;
-
     const newFiles: FileItem[] = [];
     for (const file of Array.from(fileList)) {
       if (!file.name.toLowerCase().endsWith(".xml")) {
         newFiles.push({ file, status: "error", error: "No es .xml" });
         continue;
       }
-      newFiles.push({ file, status: "loading" });
+      newFiles.push({ file, status: "ready" });
     }
-
     setFiles((prev) => [...prev, ...newFiles]);
-
-    // Leer en paralelo
-    for (let i = 0; i < newFiles.length; i++) {
-      const fi = newFiles[i];
-      if (fi.status === "error") continue;
-      try {
-        const { base64, bytes } = await readFileAsBase64(fi.file);
-        setFiles((prev) =>
-          prev.map((p) =>
-            p.file === fi.file ? { ...p, base64, base64Bytes: bytes, status: "ready" } : p
-          )
-        );
-      } catch (err: any) {
-        setFiles((prev) =>
-          prev.map((p) =>
-            p.file === fi.file ? { ...p, status: "error", error: err.message } : p
-          )
-        );
-      }
-    }
   }
 
   function removeFile(idx: number) {
@@ -98,42 +86,27 @@ export function XmlImportClient({ businessId, businessName }: Props) {
     setProgress(null);
   }
 
-  /**
-   * Divide los archivos en chunks de máximo MAX_CHUNK_BYTES (base64 size).
-   * Cada chunk se sube en un request independiente.
-   */
-  function buildChunks(readyFiles: FileItem[]): FileItem[][] {
-    const chunks: FileItem[][] = [];
-    let currentChunk: FileItem[] = [];
-    let currentSize = 0;
+  async function uploadFile(file: File): Promise<ImportResult> {
+    const formData = new FormData();
+    formData.append("businessId", businessId);
+    formData.append("file_0", file);
 
-    for (const f of readyFiles) {
-      const fileSize = f.base64Bytes ?? 0;
+    const res = await fetch("/api/upload-xml", {
+      method: "POST",
+      body: formData,
+    });
 
-      // Si el archivo solo ya excede el límite, va en su propio chunk
-      if (fileSize > MAX_CHUNK_BYTES) {
-        if (currentChunk.length > 0) {
-          chunks.push(currentChunk);
-          currentChunk = [];
-          currentSize = 0;
-        }
-        chunks.push([f]);
-        continue;
-      }
-
-      // Si agregar este archivo excede, cerramos chunk
-      if (currentSize + fileSize > MAX_CHUNK_BYTES && currentChunk.length > 0) {
-        chunks.push(currentChunk);
-        currentChunk = [];
-        currentSize = 0;
-      }
-
-      currentChunk.push(f);
-      currentSize += fileSize;
+    if (!res.ok) {
+      const txt = await res.text();
+      let msg = txt;
+      try {
+        const j = JSON.parse(txt);
+        msg = j.error ?? txt;
+      } catch {}
+      throw new Error(`${res.status}: ${msg}`);
     }
 
-    if (currentChunk.length > 0) chunks.push(currentChunk);
-    return chunks;
+    return res.json();
   }
 
   async function handleImport() {
@@ -141,50 +114,42 @@ export function XmlImportClient({ businessId, businessName }: Props) {
     setResult(null);
     setProgress(null);
 
-    const readyFiles = files.filter((f) => f.status === "ready" && f.base64);
+    const readyFiles = files.filter((f) => f.status === "ready");
     if (readyFiles.length === 0) {
       setError("No hay archivos válidos para importar");
       return;
     }
 
-    // Verificar tamaños individuales
-    const tooBig = readyFiles.find((f) => (f.base64Bytes ?? 0) > MAX_CHUNK_BYTES);
-    if (tooBig) {
-      setError(
-        `El archivo "${tooBig.file.name}" pesa más de ${VERCEL_HARD_LIMIT_HUMAN} en base64 y excede el límite de Vercel para Server Actions. Considera dividirlo o usar otra estrategia.`
-      );
-      return;
-    }
-
-    const chunks = buildChunks(readyFiles);
-
     start(async () => {
       try {
-        // Subir chunks secuencialmente y combinar resultados
-        const allSummaries: XmlImportSummary[] = [];
+        const allSummaries: ImportSummary[] = [];
         let lastBatchId = "";
 
-        for (let i = 0; i < chunks.length; i++) {
-          const chunk = chunks[i];
+        for (let i = 0; i < readyFiles.length; i++) {
+          const fi = readyFiles[i];
           setProgress({
             current: i + 1,
-            total: chunks.length,
-            chunkInfo: chunk.map((c) => c.file.name).join(", "),
+            total: readyFiles.length,
+            filename: fi.file.name,
           });
 
-          const res = await runXmlImport(
-            businessId,
-            chunk.map((f) => ({
-              filename: f.file.name,
-              base64Content: f.base64!,
-            }))
-          );
-
-          allSummaries.push(...res.summaries);
-          lastBatchId = res.batchId;
+          try {
+            const res = await uploadFile(fi.file);
+            allSummaries.push(...res.summaries);
+            lastBatchId = res.batchId;
+          } catch (err: any) {
+            allSummaries.push({
+              filename: fi.file.name,
+              fileType: "unknown",
+              totalRecords: 0,
+              imported: 0,
+              skipped: 0,
+              errors: 1,
+              errorDetails: [{ row: 0, message: err.message ?? "Error de red" }],
+            });
+          }
         }
 
-        // Construir resultado combinado
         const totals = {
           totalRecords: allSummaries.reduce((s, x) => s + x.totalRecords, 0),
           imported: allSummaries.reduce((s, x) => s + x.imported, 0),
@@ -212,10 +177,6 @@ export function XmlImportClient({ businessId, businessName }: Props) {
   const totalSize = files.reduce((s, f) => s + f.file.size, 0);
   const totalSizeMB = totalSize / (1024 * 1024);
 
-  // Calcular cuántos chunks se harán
-  const readyFiles = files.filter((f) => f.status === "ready" && f.base64);
-  const estimatedChunks = readyFiles.length > 0 ? buildChunks(readyFiles).length : 0;
-
   return (
     <div className="space-y-4">
       <Card>
@@ -229,10 +190,9 @@ export function XmlImportClient({ businessId, businessName }: Props) {
             Destino: <strong>{businessName}</strong>
           </p>
           <p className="text-xs text-muted-foreground">
-            Sube uno o varios archivos .xml de SoftRestaurant.
+            Sube uno o varios archivos .xml de SoftRestaurant. Cada archivo se sube
+            individualmente al servidor (soporta hasta ~50MB por archivo).
             El sistema detecta automáticamente el tipo y previene duplicados por folio.
-            <br />
-            <strong>Archivos grandes:</strong> se suben automáticamente por lotes de ~3 MB para evitar el límite de Vercel.
           </p>
 
           <label
@@ -265,11 +225,6 @@ export function XmlImportClient({ businessId, businessName }: Props) {
                 <span className="text-xs text-muted-foreground ml-2">
                   ({totalSizeMB.toFixed(2)} MB total)
                 </span>
-                {estimatedChunks > 1 && (
-                  <Badge variant="secondary" className="ml-2 text-[10px]">
-                    Se subirá en {estimatedChunks} lotes
-                  </Badge>
-                )}
               </CardTitle>
               <Button variant="ghost" size="sm" onClick={clearAll} disabled={pending}>
                 <X className="w-3.5 h-3.5 mr-1" /> Quitar todos
@@ -280,7 +235,6 @@ export function XmlImportClient({ businessId, businessName }: Props) {
             <div className="divide-y max-h-72 overflow-y-auto">
               {files.map((f, i) => (
                 <div key={i} className="flex items-center gap-2 p-3 text-sm">
-                  {f.status === "loading" && <Loader2 className="w-4 h-4 animate-spin text-blue-500" />}
                   {f.status === "ready" && <FileCheck className="w-4 h-4 text-green-600" />}
                   {f.status === "error" && <FileX className="w-4 h-4 text-red-600" />}
                   <span className="flex-1 truncate">{f.file.name}</span>
@@ -309,9 +263,6 @@ export function XmlImportClient({ businessId, businessName }: Props) {
           <CardContent className="p-3 flex items-center justify-between gap-3">
             <p className="text-sm">
               <strong>{readyCount}</strong> archivo{readyCount !== 1 ? "s" : ""} listo{readyCount !== 1 ? "s" : ""}
-              {estimatedChunks > 1 && (
-                <span className="text-muted-foreground ml-1">· {estimatedChunks} lotes</span>
-              )}
             </p>
             <Button onClick={handleImport} disabled={pending} size="lg">
               {pending ? (
@@ -324,19 +275,16 @@ export function XmlImportClient({ businessId, businessName }: Props) {
         </Card>
       )}
 
-      {/* Progreso de chunks */}
       {progress && (
         <Card className="border-blue-300 bg-blue-50/50">
           <CardContent className="p-4 space-y-2">
             <div className="flex items-center justify-between">
               <p className="text-sm font-medium text-blue-700">
-                Subiendo lote {progress.current} de {progress.total}
+                Procesando archivo {progress.current} de {progress.total}
               </p>
               <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
             </div>
-            <p className="text-xs text-blue-700/70 truncate">
-              {progress.chunkInfo}
-            </p>
+            <p className="text-xs text-blue-700/70 truncate">{progress.filename}</p>
             <div className="w-full bg-blue-100 rounded-full h-2">
               <div
                 className="bg-blue-600 h-2 rounded-full transition-all"
@@ -350,14 +298,7 @@ export function XmlImportClient({ businessId, businessName }: Props) {
       {error && (
         <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3">
           <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-          <div>
-            <p className="font-medium">{error}</p>
-            {error.includes("excede") && (
-              <p className="text-xs mt-1 text-red-600">
-                Tip: divide los archivos en partes más pequeñas con un editor de texto.
-              </p>
-            )}
-          </div>
+          <p className="font-medium">{error}</p>
         </div>
       )}
 
