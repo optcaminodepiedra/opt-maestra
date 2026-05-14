@@ -8,15 +8,17 @@ const ADMIN_ROLES = ["MASTER_ADMIN", "OWNER", "SUPERIOR"];
 const EXTERNAL_SOURCE = "softrestaurant";
 
 // ═══════════════════════════════════════════════════════════════
-// CONFIGURACIÓN DEL ROUTE HANDLER
+// CONFIGURACIÓN
 // ═══════════════════════════════════════════════════════════════
-// Los route handlers de Next.js NO tienen el límite de 4.5MB de
-// Server Actions. Pueden recibir requests grandes vía multipart.
-// maxDuration alto porque parsear 9MB de XML toma varios segundos.
+// maxDuration = 60s (límite Vercel Free)
+// Usamos createMany() en bulk para procesar 1000+ registros en ~3s
+// en vez de inserts secuenciales que tardan 50-60s y dan timeout.
 // ═══════════════════════════════════════════════════════════════
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; // 60 segundos (límite Vercel Free)
+export const maxDuration = 60;
 export const runtime = "nodejs";
+
+const BATCH_SIZE = 500; // Lote de createMany — Postgres aguanta bien hasta 1000
 
 type ImportSummary = {
   filename: string;
@@ -42,6 +44,9 @@ type ImportResult = {
 };
 
 export async function POST(req: NextRequest) {
+  const t0 = Date.now();
+  console.log("[upload-xml] === POST INICIO ===");
+
   // ─── 1. Autenticación ─────────────────────────────────────────
   const session = await getServerSession(authOptions);
   if (!session?.user) {
@@ -92,12 +97,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No se enviaron archivos" }, { status: 400 });
   }
 
+  console.log(`[upload-xml] Recibidos ${files.length} archivos para ${business.name}`);
+
   // ─── 5. Procesar archivos ────────────────────────────────────
   try {
     const result = await processFiles(businessId, userId, files);
+    const dt = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log(`[upload-xml] === COMPLETADO en ${dt}s ===`);
     return NextResponse.json(result);
   } catch (err: any) {
-    console.error("[upload-xml] ERROR:", err);
+    const dt = ((Date.now() - t0) / 1000).toFixed(1);
+    console.error(`[upload-xml] ERROR en ${dt}s:`, err);
     return NextResponse.json(
       { error: err.message ?? "Error procesando archivos" },
       { status: 500 }
@@ -114,15 +124,18 @@ async function processFiles(
   userId: string,
   files: File[]
 ): Promise<ImportResult> {
-  // Parsear todos primero
+  // Parsear todos los archivos
   const parsedFiles: Array<{ filename: string; parsed: ParsedVfpFile }> = [];
   for (const file of files) {
+    const t = Date.now();
     try {
       const arrayBuffer = await file.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
       const parsed = parseVfpXml(buffer);
       parsedFiles.push({ filename: file.name, parsed });
+      console.log(`[upload-xml] Parseado ${file.name} (${parsed.fileType}, ${parsed.totalRecords} regs) en ${Date.now() - t}ms`);
     } catch (err: any) {
+      console.error(`[upload-xml] Error parseando ${file.name}:`, err.message);
       parsedFiles.push({
         filename: file.name,
         parsed: {
@@ -150,7 +163,7 @@ async function processFiles(
     },
   });
 
-  // Orden: cheques primero
+  // Orden de procesamiento
   const order: VfpFileType[] = [
     "cheques", "cheqdet", "movtoscaja", "turnos", "cancela",
     "cuentasporcobrar", "movsinv", "compras", "gastos", "hotelmovtos",
@@ -162,9 +175,7 @@ async function processFiles(
     return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
   });
 
-  const summaries: ImportSummary[] = [];
-
-  // Cashpoint fallback
+  // Cashpoint fallback (cargar una sola vez)
   let firstCashpoint = await prisma.cashpoint.findFirst({
     where: { businessId },
     select: { id: true },
@@ -176,18 +187,21 @@ async function processFiles(
     });
   }
 
+  const summaries: ImportSummary[] = [];
+
   for (const { filename, parsed } of sortedFiles) {
+    const t = Date.now();
     let summary: ImportSummary;
     try {
       switch (parsed.fileType) {
         case "cheques":
-          summary = await importCheques(
+          summary = await importChequesFast(
             batch.id, businessId, filename, parsed,
             firstCashpoint.id, userId
           );
           break;
         case "movtoscaja":
-          summary = await importMovtosCaja(
+          summary = await importMovtosCajaFast(
             batch.id, businessId, filename, parsed, userId
           );
           break;
@@ -204,7 +218,9 @@ async function processFiles(
             }],
           };
       }
+      console.log(`[upload-xml] Importado ${filename}: ${summary.imported} ok, ${summary.skipped} skip, ${summary.errors} err (${Date.now() - t}ms)`);
     } catch (err: any) {
+      console.error(`[upload-xml] Falló ${filename}:`, err.message);
       summary = {
         filename, fileType: parsed.fileType,
         totalRecords: parsed.totalRecords,
@@ -243,10 +259,13 @@ async function processFiles(
 }
 
 // ═══════════════════════════════════════════════════════════════
-// IMPORTADOR CHEQUES
+// IMPORTADOR CHEQUES — versión FAST con createMany
+// ═══════════════════════════════════════════════════════════════
+// Antes: 1,022 inserts secuenciales = ~51s → TIMEOUT
+// Ahora: 1 query de folios existentes + 2-3 createMany de 500 = ~3s
 // ═══════════════════════════════════════════════════════════════
 
-async function importCheques(
+async function importChequesFast(
   batchId: string,
   businessId: string,
   filename: string,
@@ -259,14 +278,17 @@ async function importCheques(
   let errors = 0;
   const errorDetails: Array<{ row: number; message: string }> = [];
 
+  // 1. Cargar folios existentes (UN SOLO query)
   const existing = await prisma.sale.findMany({
     where: { businessId, externalSource: EXTERNAL_SOURCE } as any,
-    select: { id: true, externalFolio: true } as any,
+    select: { externalFolio: true } as any,
   });
-  const existingFolios = new Map<string, string>();
-  for (const s of existing as any[]) {
-    if (s.externalFolio) existingFolios.set(s.externalFolio, s.id);
-  }
+  const existingFolios = new Set(
+    (existing as any[]).map((s) => s.externalFolio).filter(Boolean)
+  );
+
+  // 2. Procesar TODO en memoria primero (sin tocar BD)
+  const toInsert: any[] = [];
 
   for (let i = 0; i < parsed.records.length; i++) {
     const row = parsed.records[i];
@@ -323,29 +345,53 @@ async function importCheques(
       const meseroNum = row.mesero ?? "?";
       const concept = `Mesa ${mesa} · ${nopersonas} pax · Mesero ${meseroNum}`;
 
-      const sale = await prisma.sale.create({
-        data: {
-          businessId,
-          cashpointId,
-          userId: fallbackUserId,
-          amountCents,
-          method,
-          concept,
-          createdAt: fecha,
-          importBatchId: batchId,
-          externalSource: EXTERNAL_SOURCE,
-          externalFolio: folio,
-        } as any,
+      toInsert.push({
+        businessId,
+        cashpointId,
+        userId: fallbackUserId,
+        amountCents,
+        method,
+        concept,
+        createdAt: fecha,
+        importBatchId: batchId,
+        externalSource: EXTERNAL_SOURCE,
+        externalFolio: folio,
       });
 
-      existingFolios.set(folio, sale.id);
-      imported++;
+      existingFolios.add(folio); // proteger contra duplicados en el mismo archivo
     } catch (err: any) {
       errors++;
       errorDetails.push({
         row: rowNum,
         message: err.message?.slice(0, 200) ?? "Error",
       });
+    }
+  }
+
+  // 3. Bulk insert en lotes de BATCH_SIZE
+  for (let i = 0; i < toInsert.length; i += BATCH_SIZE) {
+    const chunk = toInsert.slice(i, i + BATCH_SIZE);
+    try {
+      const result = await prisma.sale.createMany({
+        data: chunk as any,
+        skipDuplicates: true, // si la UNIQUE constraint dispara, no rompe
+      });
+      imported += result.count;
+    } catch (err: any) {
+      // Si falla el batch entero, intentar uno por uno para recuperar máximo posible
+      console.error(`[upload-xml] Batch falló, reintentando individual:`, err.message);
+      for (const item of chunk) {
+        try {
+          await prisma.sale.create({ data: item });
+          imported++;
+        } catch (e: any) {
+          errors++;
+          errorDetails.push({
+            row: 0,
+            message: `Folio ${item.externalFolio}: ${e.message?.slice(0, 100)}`,
+          });
+        }
+      }
     }
   }
 
@@ -358,10 +404,10 @@ async function importCheques(
 }
 
 // ═══════════════════════════════════════════════════════════════
-// IMPORTADOR MOVIMIENTOS CAJA
+// IMPORTADOR MOVIMIENTOS CAJA — versión FAST con createMany
 // ═══════════════════════════════════════════════════════════════
 
-async function importMovtosCaja(
+async function importMovtosCajaFast(
   batchId: string,
   businessId: string,
   filename: string,
@@ -380,6 +426,8 @@ async function importMovtosCaja(
   const existingFolios = new Set(
     (existing as any[]).map((e) => e.externalFolio).filter(Boolean)
   );
+
+  const toInsert: any[] = [];
 
   for (let i = 0; i < parsed.records.length; i++) {
     const row = parsed.records[i];
@@ -434,28 +482,51 @@ async function importMovtosCaja(
       const note = referencia ? `${conceptoRaw} (Ref: ${referencia})` : conceptoRaw;
       const amountCents = Math.round(importe * 100);
 
-      await prisma.expense.create({
-        data: {
-          businessId,
-          userId: fallbackUserId,
-          amountCents,
-          category,
-          note: note || null,
-          createdAt: fecha,
-          importBatchId: batchId,
-          externalSource: EXTERNAL_SOURCE,
-          externalFolio: folio,
-        } as any,
+      toInsert.push({
+        businessId,
+        userId: fallbackUserId,
+        amountCents,
+        category,
+        note: note || null,
+        createdAt: fecha,
+        importBatchId: batchId,
+        externalSource: EXTERNAL_SOURCE,
+        externalFolio: folio,
       });
 
       existingFolios.add(folio);
-      imported++;
     } catch (err: any) {
       errors++;
       errorDetails.push({
         row: rowNum,
         message: err.message?.slice(0, 200) ?? "Error",
       });
+    }
+  }
+
+  // Bulk insert
+  for (let i = 0; i < toInsert.length; i += BATCH_SIZE) {
+    const chunk = toInsert.slice(i, i + BATCH_SIZE);
+    try {
+      const result = await prisma.expense.createMany({
+        data: chunk as any,
+        skipDuplicates: true,
+      });
+      imported += result.count;
+    } catch (err: any) {
+      console.error(`[upload-xml] Batch Expense falló:`, err.message);
+      for (const item of chunk) {
+        try {
+          await prisma.expense.create({ data: item });
+          imported++;
+        } catch (e: any) {
+          errors++;
+          errorDetails.push({
+            row: 0,
+            message: `Folio ${item.externalFolio}: ${e.message?.slice(0, 100)}`,
+          });
+        }
+      }
     }
   }
 
