@@ -10,7 +10,7 @@ import {
   DollarSign, Users, BedDouble, TrendingDown, AlertTriangle, ArrowRight,
   CheckSquare, UtensilsCrossed, Sparkles, Building2, ClipboardList, Package,
   Flower2, ShoppingBag, Bath, ShoppingCart, Calendar, FileText, BarChart3,
-  Receipt, TrendingUp, Wallet,
+  Receipt, TrendingUp, Wallet, HelpCircle,
 } from "lucide-react";
 
 import { TodayShiftPanel } from "@/components/manager/TodayShiftPanel";
@@ -43,8 +43,7 @@ const fmt = (cents: number) =>
     style: "currency", currency: "MXN", maximumFractionDigits: 0,
   }).format(cents / 100);
 
-const fmtNumber = (n: number) =>
-  new Intl.NumberFormat("es-MX").format(n);
+const fmtNumber = (n: number) => new Intl.NumberFormat("es-MX").format(n);
 
 export default async function ManagerOpsDashboard({
   searchParams,
@@ -73,8 +72,6 @@ export default async function ManagerOpsDashboard({
   const sp = await searchParams;
   const filters = resolveAnalyticsFilters(sp, scope.businessIds);
 
-  // Para queries no-analytics seguimos con scope.businessIds completos
-  // pero para analytics usamos filters.selectedBusinessIds (puede ser subset)
   const businessIds = scope.businessIds;
   const businesses = scope.businesses;
   const todayIso = isoDate();
@@ -88,13 +85,8 @@ export default async function ManagerOpsDashboard({
 
   const granularity = suggestGranularity(filters.range);
 
-  // ───────────────────────────────────────────────────────────
-  // QUERIES — todo en paralelo para máxima velocidad
-  // ───────────────────────────────────────────────────────────
   const [
-    // Analytics
     kpis, salesSeries, expensesSeries, salesByMethod, byBusiness,
-    // Operación del día (queries existentes)
     pendingTasks, pendingPettyWithdrawals, pendingLargeWithdrawals,
     activeOrdersCount, totalTables, occupiedTablesRaw,
     occupiedRooms, totalRooms, roomsDirty, roomsMaintenance,
@@ -102,7 +94,6 @@ export default async function ManagerOpsDashboard({
     staffOnShift, cashpoints, invItems,
     myRequisitions,
   ] = await Promise.all([
-    // Analytics queries
     getKpisWithDelta(filters.selectedBusinessIds, filters.range, filters.comparisonRange),
     getSalesTimeSeries(filters.selectedBusinessIds, filters.range, granularity),
     getExpensesTimeSeries(filters.selectedBusinessIds, filters.range, granularity),
@@ -111,7 +102,6 @@ export default async function ManagerOpsDashboard({
       ? getAnalyticsByBusiness(filters.selectedBusinessIds, businessesMap, filters.range)
       : Promise.resolve([]),
 
-    // Operación del día
     prisma.task.count({ where: { ...whereByBiz, status: { in: ["TODO", "DOING", "BLOCKED"] } } }),
     prisma.withdrawal.count({ where: { ...whereByBiz, status: "APPROVED", createdAt: { gte: todayLocal } } }),
     prisma.withdrawal.count({ where: { ...whereByBiz, status: "REQUESTED" } }),
@@ -136,17 +126,14 @@ export default async function ManagerOpsDashboard({
   const hasHotel = totalRooms > 0;
   const lowStockItems = invItems.filter((i) => i.onHandQty <= i.minQty);
 
-  // Mergear series (label de actual + valor de comparación si existe)
   const mergedSalesSeries = mergeSeriesForChart(salesSeries, filters.comparisonRange ? await getSalesTimeSeries(filters.selectedBusinessIds, filters.comparisonRange, granularity) : []);
   const mergedExpensesSeries = mergeSeriesForChart(expensesSeries, filters.comparisonRange ? await getExpensesTimeSeries(filters.selectedBusinessIds, filters.comparisonRange, granularity) : []);
 
-  // Food service
   const hotelBusinessIds = businesses.map((b) => b.linkedHotelBusinessId).filter(Boolean) as string[];
   const foodServiceDays = hotelBusinessIds.length > 0
     ? await getFoodServicePax(hotelBusinessIds[0], 7)
     : [];
 
-  // Plantilla por cada negocio
   const shiftsByBusiness = await Promise.all(
     businesses.map(async (b) => ({
       business: b,
@@ -159,7 +146,6 @@ export default async function ManagerOpsDashboard({
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-5">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Hola, {firstName} 👋</h1>
@@ -174,7 +160,10 @@ export default async function ManagerOpsDashboard({
             ))}
           </div>
         </div>
-        <div className="flex gap-2 shrink-0">
+        <div className="flex gap-2 shrink-0 flex-wrap">
+          <Button variant="ghost" size="sm" asChild>
+            <Link href="/app/manager/ops/help"><HelpCircle className="w-4 h-4 mr-1.5" /> Ayuda</Link>
+          </Button>
           <Button variant="outline" size="sm" asChild>
             <Link href={`/app/manager/ops/finances${searchParamsToQs(sp)}`}>
               <DollarSign className="w-4 h-4 mr-1.5" /> Finanzas
@@ -189,7 +178,6 @@ export default async function ManagerOpsDashboard({
         </div>
       </div>
 
-      {/* Toolbar de filtros analytics */}
       <AnalyticsToolbar
         preset={filters.preset}
         customFromIso={filters.customFromIso}
@@ -202,7 +190,7 @@ export default async function ManagerOpsDashboard({
         showBusinessSelector={businesses.length > 1}
       />
 
-      {/* KPIs analíticos con comparativo */}
+      {/* KPIs CON TOOLTIPS */}
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
         <KpiCard
           label="Ventas"
@@ -211,6 +199,8 @@ export default async function ManagerOpsDashboard({
           icon={<DollarSign className="h-4 w-4 text-green-600" />}
           color="green"
           subtitle={`${fmtNumber(kpis.salesCount)} tx`}
+          helpText="Total ingresado al negocio en el período seleccionado. Suma de todos los tickets cobrados (efectivo, tarjeta y transferencia)."
+          helpSlug="ventas-totales"
         />
         <KpiCard
           label="Gastos"
@@ -219,6 +209,8 @@ export default async function ManagerOpsDashboard({
           invertDelta={true}
           icon={<TrendingDown className="h-4 w-4 text-red-500" />}
           color="red"
+          helpText="Todo lo que salió del negocio como gasto operativo: nóminas, insumos, propinas pagadas. NO incluye retiros de caja."
+          helpSlug="gastos-totales"
         />
         <KpiCard
           label="Neto"
@@ -227,6 +219,8 @@ export default async function ManagerOpsDashboard({
           icon={<TrendingUp className="h-4 w-4 text-blue-600" />}
           color={kpis.netTotal >= 0 ? "blue" : "red"}
           subtitle="Ventas − Gastos"
+          helpText="Utilidad operativa: ventas menos gastos. Si es verde, ganaste. Si es rojo, perdiste."
+          helpSlug="utilidad-neta"
         />
         <KpiCard
           label="Ticket promedio"
@@ -234,10 +228,11 @@ export default async function ManagerOpsDashboard({
           delta={kpis.avgTicketDelta}
           icon={<Receipt className="h-4 w-4 text-purple-600" />}
           color="purple"
+          helpText="Cuánto gasta en promedio cada cliente por visita. Ventas totales ÷ número de tickets."
+          helpSlug="ticket-promedio"
         />
       </div>
 
-      {/* Gráfica de ventas vs gastos */}
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <TimeSeriesChart
@@ -255,7 +250,6 @@ export default async function ManagerOpsDashboard({
         />
       </div>
 
-      {/* Análisis por negocio si hay >1 */}
       {byBusiness.length > 1 && (
         <Card>
           <CardHeader className="pb-3">
@@ -294,7 +288,6 @@ export default async function ManagerOpsDashboard({
         </Card>
       )}
 
-      {/* OPERACIÓN DEL DÍA + columna lateral (mismo layout que tenías) */}
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-4">
           <Card>
@@ -357,7 +350,6 @@ export default async function ManagerOpsDashboard({
             <FoodServicePanel hotelName={businesses[0]?.name ?? "Hotel"} days={foodServiceDays} />
           )}
 
-          {/* Gastos en gráfica si hay datos */}
           {mergedExpensesSeries.actual.length > 0 && (
             <TimeSeriesChart
               title="Gastos en el período"
@@ -441,7 +433,7 @@ export default async function ManagerOpsDashboard({
               <QuickBtn icon={<Package className="w-3.5 h-3.5 mr-1.5" />} label="Inventario" href="/app/manager/ops/inventory" />
               <QuickBtn icon={<ClipboardList className="w-3.5 h-3.5 mr-1.5" />} label="Requisiciones" href="/app/manager/ops/requisitions" />
               <QuickBtn icon={<FileText className="w-3.5 h-3.5 mr-1.5" />} label="Reportes" href="/app/manager/ops/reports" />
-              <QuickBtn icon={<CheckSquare className="w-3.5 h-3.5 mr-1.5" />} label="Tareas" href="/app/ops/kanban/activities" />
+              <QuickBtn icon={<HelpCircle className="w-3.5 h-3.5 mr-1.5" />} label="Ayuda" href="/app/manager/ops/help" />
             </CardContent>
           </Card>
         </div>
@@ -450,19 +442,12 @@ export default async function ManagerOpsDashboard({
   );
 }
 
-// ────────────────────────────────────────────────────────────
-// Helper: mergear actual + comparison en arrays alineados por índice
-// ────────────────────────────────────────────────────────────
 function mergeSeriesForChart(
   actual: Array<{ label: string; value: number; count?: number; date: string }>,
   comparison: Array<{ label: string; value: number; count?: number; date: string }>
 ) {
   return {
-    actual: actual.map((p) => ({
-      label: p.label,
-      value: p.value,
-      count: p.count,
-    })),
+    actual: actual.map((p) => ({ label: p.label, value: p.value, count: p.count })),
     comparison: actual.map((_, i) => ({
       label: comparison[i]?.label ?? "",
       value: comparison[i]?.value ?? 0,
@@ -476,10 +461,6 @@ function searchParamsToQs(sp: Record<string, string | undefined>): string {
   if (entries.length === 0) return "";
   return "?" + entries.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
 }
-
-// ────────────────────────────────────────────────────────────
-// Componentes inline existentes (sin cambios)
-// ────────────────────────────────────────────────────────────
 
 function Stat({ label, value, color }: { label: string; value: string | number; color?: string }) {
   return (<div><p className="text-xs text-muted-foreground">{label}</p><p className={`font-semibold ${color ?? ""}`}>{value}</p></div>);

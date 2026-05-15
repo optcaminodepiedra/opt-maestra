@@ -1,15 +1,20 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { HelpTooltip } from "./HelpTooltip";
 
 type Props = {
   label: string;
   value: string;
-  delta?: number | null;     // porcentaje, null = sin comparación
+  delta?: number | null;
   icon?: React.ReactNode;
   color?: "green" | "blue" | "red" | "purple" | "orange" | "amber";
   subtitle?: string;
   /** Si es true, delta negativo se muestra en verde (ej: gastos bajando es bueno). */
   invertDelta?: boolean;
+  /** Texto corto para el tooltip de ayuda. */
+  helpText?: string;
+  /** Slug del catálogo de ayuda para el link "Más info". */
+  helpSlug?: string;
 };
 
 const colorClasses: Record<NonNullable<Props["color"]>, string> = {
@@ -21,12 +26,18 @@ const colorClasses: Record<NonNullable<Props["color"]>, string> = {
   amber: "border-l-amber-500",
 };
 
-export function KpiCard({ label, value, delta, icon, color = "blue", subtitle, invertDelta }: Props) {
+export function KpiCard({
+  label, value, delta, icon, color = "blue", subtitle, invertDelta,
+  helpText, helpSlug,
+}: Props) {
   return (
     <Card className={`border-l-4 ${colorClasses[color]} py-0`}>
       <CardContent className="px-4 py-4 space-y-2">
         <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-medium text-muted-foreground truncate">{label}</p>
+          <div className="flex items-center gap-1 min-w-0">
+            <p className="text-xs font-medium text-muted-foreground truncate">{label}</p>
+            {helpText && <HelpTooltip text={helpText} slug={helpSlug} />}
+          </div>
           {icon}
         </div>
 
