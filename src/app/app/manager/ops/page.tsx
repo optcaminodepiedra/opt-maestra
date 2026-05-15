@@ -9,8 +9,10 @@ import Link from "next/link";
 import {
   DollarSign, Users, BedDouble, TrendingDown, AlertTriangle, ArrowRight,
   CheckSquare, UtensilsCrossed, Sparkles, Building2, ClipboardList, Package,
-  Flower2, ShoppingBag, Bath, ShoppingCart, Utensils, Calendar, FileText,
+  Flower2, ShoppingBag, Bath, ShoppingCart, Calendar, FileText, BarChart3,
+  Receipt, TrendingUp, Wallet,
 } from "lucide-react";
+
 import { TodayShiftPanel } from "@/components/manager/TodayShiftPanel";
 import { WithdrawalActions } from "@/components/manager/WithdrawalActions";
 import { FoodServicePanel } from "@/components/manager/FoodServicePanel";
@@ -22,6 +24,18 @@ import { resolveManagerScope } from "@/lib/manager-scope";
 import { RequisitionTrackingPanel } from "@/components/manager/RequisitionTrackingPanel";
 import { loadMyRequisitions } from "@/lib/manager-requisitions";
 
+// Analytics
+import { resolveAnalyticsFilters } from "@/lib/analytics-filters";
+import {
+  getKpisWithDelta, getSalesTimeSeries, getExpensesTimeSeries,
+  getSalesByMethod, getAnalyticsByBusiness,
+} from "@/lib/analytics";
+import { suggestGranularity } from "@/lib/date-presets";
+import { AnalyticsToolbar } from "@/components/analytics/AnalyticsToolbar";
+import { KpiCard } from "@/components/analytics/KpiCard";
+import { TimeSeriesChart } from "@/components/analytics/TimeSeriesChart";
+import { DistributionDonut } from "@/components/analytics/DistributionDonut";
+
 export const dynamic = "force-dynamic";
 
 const fmt = (cents: number) =>
@@ -29,7 +43,14 @@ const fmt = (cents: number) =>
     style: "currency", currency: "MXN", maximumFractionDigits: 0,
   }).format(cents / 100);
 
-export default async function ManagerOpsDashboard() {
+const fmtNumber = (n: number) =>
+  new Intl.NumberFormat("es-MX").format(n);
+
+export default async function ManagerOpsDashboard({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
   const session = await getServerSession(authOptions);
   if (!session?.user) redirect("/login");
 
@@ -49,28 +70,48 @@ export default async function ManagerOpsDashboard() {
     );
   }
 
+  const sp = await searchParams;
+  const filters = resolveAnalyticsFilters(sp, scope.businessIds);
+
+  // Para queries no-analytics seguimos con scope.businessIds completos
+  // pero para analytics usamos filters.selectedBusinessIds (puede ser subset)
   const businessIds = scope.businessIds;
   const businesses = scope.businesses;
   const todayIso = isoDate();
   const today = dateOnly(todayIso);
   const todayLocal = new Date();
   todayLocal.setHours(0, 0, 0, 0);
-  const startOfMonth = new Date(todayLocal.getFullYear(), todayLocal.getMonth(), 1);
   const tomorrowLocal = new Date(todayLocal.getTime() + 24 * 3600 * 1000);
   const whereByBiz = { businessId: { in: businessIds } };
 
+  const businessesMap = new Map(businesses.map((b) => [b.id, b.name]));
+
+  const granularity = suggestGranularity(filters.range);
+
+  // ───────────────────────────────────────────────────────────
+  // QUERIES — todo en paralelo para máxima velocidad
+  // ───────────────────────────────────────────────────────────
   const [
-    salesTodayAgg, salesMonthAgg, expTodayAgg, pendingTasks,
-    pendingPettyWithdrawals, pendingLargeWithdrawals,
+    // Analytics
+    kpis, salesSeries, expensesSeries, salesByMethod, byBusiness,
+    // Operación del día (queries existentes)
+    pendingTasks, pendingPettyWithdrawals, pendingLargeWithdrawals,
     activeOrdersCount, totalTables, occupiedTablesRaw,
     occupiedRooms, totalRooms, roomsDirty, roomsMaintenance,
     todayCheckIns, todayCheckOuts, pendingRequisitions,
-    staffOnShift, cashpoints, invItems, salesByBusiness,
+    staffOnShift, cashpoints, invItems,
     myRequisitions,
   ] = await Promise.all([
-    prisma.sale.aggregate({ where: { ...whereByBiz, createdAt: { gte: todayLocal } }, _sum: { amountCents: true }, _count: true }),
-    prisma.sale.aggregate({ where: { ...whereByBiz, createdAt: { gte: startOfMonth } }, _sum: { amountCents: true } }),
-    prisma.expense.aggregate({ where: { ...whereByBiz, createdAt: { gte: todayLocal } }, _sum: { amountCents: true } }),
+    // Analytics queries
+    getKpisWithDelta(filters.selectedBusinessIds, filters.range, filters.comparisonRange),
+    getSalesTimeSeries(filters.selectedBusinessIds, filters.range, granularity),
+    getExpensesTimeSeries(filters.selectedBusinessIds, filters.range, granularity),
+    getSalesByMethod(filters.selectedBusinessIds, filters.range),
+    businessIds.length > 1
+      ? getAnalyticsByBusiness(filters.selectedBusinessIds, businessesMap, filters.range)
+      : Promise.resolve([]),
+
+    // Operación del día
     prisma.task.count({ where: { ...whereByBiz, status: { in: ["TODO", "DOING", "BLOCKED"] } } }),
     prisma.withdrawal.count({ where: { ...whereByBiz, status: "APPROVED", createdAt: { gte: todayLocal } } }),
     prisma.withdrawal.count({ where: { ...whereByBiz, status: "REQUESTED" } }),
@@ -87,24 +128,20 @@ export default async function ManagerOpsDashboard() {
     prisma.workDay.count({ where: { date: today, status: { in: ["OPEN", "NEEDS_REVIEW"] }, user: { businessId: { in: businessIds } } } }),
     prisma.cashpoint.findMany({ where: { businessId: { in: businessIds } }, select: { id: true, name: true, businessId: true }, orderBy: [{ businessId: "asc" }, { name: "asc" }] }),
     prisma.inventoryItem.findMany({ where: { ...whereByBiz, isActive: true }, select: { id: true, name: true, onHandQty: true, minQty: true, businessId: true } }),
-    businessIds.length > 1
-      ? prisma.sale.groupBy({ by: ["businessId"], where: { ...whereByBiz, createdAt: { gte: todayLocal } }, _sum: { amountCents: true }, _count: true })
-      : Promise.resolve([]),
     loadMyRequisitions(scope.userId, 15),
   ]);
 
-  const salesToday = salesTodayAgg._sum.amountCents ?? 0;
-  const salesMonth = salesMonthAgg._sum.amountCents ?? 0;
-  const expensesToday = expTodayAgg._sum.amountCents ?? 0;
   const occupiedTables = occupiedTablesRaw.length;
   const hasRestaurant = totalTables > 0;
   const hasHotel = totalRooms > 0;
   const lowStockItems = invItems.filter((i) => i.onHandQty <= i.minQty);
 
-  // Food service: si alguno de sus negocios tiene hotel vinculado
-  const hotelBusinessIds = businesses
-    .map((b) => b.linkedHotelBusinessId)
-    .filter(Boolean) as string[];
+  // Mergear series (label de actual + valor de comparación si existe)
+  const mergedSalesSeries = mergeSeriesForChart(salesSeries, filters.comparisonRange ? await getSalesTimeSeries(filters.selectedBusinessIds, filters.comparisonRange, granularity) : []);
+  const mergedExpensesSeries = mergeSeriesForChart(expensesSeries, filters.comparisonRange ? await getExpensesTimeSeries(filters.selectedBusinessIds, filters.comparisonRange, granularity) : []);
+
+  // Food service
+  const hotelBusinessIds = businesses.map((b) => b.linkedHotelBusinessId).filter(Boolean) as string[];
   const foodServiceDays = hotelBusinessIds.length > 0
     ? await getFoodServicePax(hotelBusinessIds[0], 7)
     : [];
@@ -121,7 +158,8 @@ export default async function ManagerOpsDashboard() {
   const bizName = (id: string) => businesses.find((b) => b.id === id)?.name ?? "Negocio";
 
   return (
-    <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6">
+    <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-5">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Hola, {firstName} 👋</h1>
@@ -138,64 +176,125 @@ export default async function ManagerOpsDashboard() {
         </div>
         <div className="flex gap-2 shrink-0">
           <Button variant="outline" size="sm" asChild>
+            <Link href={`/app/manager/ops/finances${searchParamsToQs(sp)}`}>
+              <DollarSign className="w-4 h-4 mr-1.5" /> Finanzas
+            </Link>
+          </Button>
+          <Button variant="outline" size="sm" asChild>
             <Link href="/app/manager/ops/reports"><FileText className="w-4 h-4 mr-1.5" /> Reportes</Link>
           </Button>
           <Button size="sm" asChild>
-            <Link href="/app/manager/ops/schedule"><Calendar className="w-4 h-4 mr-1.5" /> Programar turnos</Link>
+            <Link href="/app/manager/ops/schedule"><Calendar className="w-4 h-4 mr-1.5" /> Turnos</Link>
           </Button>
         </div>
       </div>
 
-      {/* KPIs */}
+      {/* Toolbar de filtros analytics */}
+      <AnalyticsToolbar
+        preset={filters.preset}
+        customFromIso={filters.customFromIso}
+        customToIso={filters.customToIso}
+        comparisonMode={filters.comparisonMode}
+        range={filters.range}
+        comparisonRange={filters.comparisonRange}
+        allBusinesses={businesses.map((b) => ({ id: b.id, name: b.name }))}
+        selectedBusinessIdsFromUrl={filters.selectedBusinessIdsFromUrl}
+        showBusinessSelector={businesses.length > 1}
+      />
+
+      {/* KPIs analíticos con comparativo */}
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-        <KpiCard color="green" label="Ventas hoy" icon={<DollarSign className="h-3.5 w-3.5 text-green-500" />}
-          value={fmt(salesToday)} subtitle={`${salesTodayAgg._count} tx · ${fmt(salesMonth)} mes`} />
-        <KpiCard color="blue" label="Personal en turno" icon={<Users className="h-3.5 w-3.5 text-blue-500" />}
-          value={String(staffOnShift)} subtitle="Empleados activos" />
-        {hasHotel ? (
-          <KpiCard color="purple" label="Ocupación" icon={<BedDouble className="h-3.5 w-3.5 text-purple-500" />}
-            value={`${occupiedRooms} / ${totalRooms}`} subtitle={`${todayCheckIns} llegan · ${todayCheckOuts} salen`} />
-        ) : (
-          <KpiCard color="purple" label="Mesas activas" icon={<UtensilsCrossed className="h-3.5 w-3.5 text-purple-500" />}
-            value={`${occupiedTables} / ${totalTables}`} subtitle={`${activeOrdersCount} órdenes abiertas`} />
-        )}
-        <KpiCard color="red" label="Gastos hoy" icon={<TrendingDown className="h-3.5 w-3.5 text-red-400" />}
-          value={fmt(expensesToday)} subtitle={`${pendingPettyWithdrawals} retiros caja chica`} />
+        <KpiCard
+          label="Ventas"
+          value={fmt(kpis.salesTotal)}
+          delta={kpis.salesDelta}
+          icon={<DollarSign className="h-4 w-4 text-green-600" />}
+          color="green"
+          subtitle={`${fmtNumber(kpis.salesCount)} tx`}
+        />
+        <KpiCard
+          label="Gastos"
+          value={fmt(kpis.expensesTotal)}
+          delta={kpis.expensesDelta}
+          invertDelta={true}
+          icon={<TrendingDown className="h-4 w-4 text-red-500" />}
+          color="red"
+        />
+        <KpiCard
+          label="Neto"
+          value={fmt(kpis.netTotal)}
+          delta={kpis.netDelta}
+          icon={<TrendingUp className="h-4 w-4 text-blue-600" />}
+          color={kpis.netTotal >= 0 ? "blue" : "red"}
+          subtitle="Ventas − Gastos"
+        />
+        <KpiCard
+          label="Ticket promedio"
+          value={fmt(kpis.avgTicket)}
+          delta={kpis.avgTicketDelta}
+          icon={<Receipt className="h-4 w-4 text-purple-600" />}
+          color="purple"
+        />
       </div>
 
-      {businessIds.length > 1 && (
+      {/* Gráfica de ventas vs gastos */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <TimeSeriesChart
+            title={`Ventas (${filters.range.label})`}
+            data={mergedSalesSeries.actual}
+            comparisonData={filters.comparisonRange ? mergedSalesSeries.comparison : undefined}
+            type="area"
+            color="#10b981"
+          />
+        </div>
+        <DistributionDonut
+          title="Métodos de pago"
+          items={salesByMethod}
+          height={200}
+        />
+      </div>
+
+      {/* Análisis por negocio si hay >1 */}
+      {byBusiness.length > 1 && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
-              <Building2 className="w-4 h-4" /> Ventas del día por negocio
+              <Building2 className="w-4 h-4" /> Por negocio
+              <Badge variant="secondary" className="ml-auto text-[10px]">
+                {filters.range.label}
+              </Badge>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <div className="divide-y">
-              {businesses.map((b) => {
-                const row = salesByBusiness.find((r: any) => r.businessId === b.id);
-                const amount = row?._sum?.amountCents ?? 0;
-                const count = row?._count ?? 0;
-                return (
-                  <div key={b.id} className="flex items-center justify-between px-4 py-3 hover:bg-muted/30">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center shrink-0">
-                        <Building2 className="w-4 h-4 text-muted-foreground" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{b.name}</p>
-                        <p className="text-xs text-muted-foreground">{count} transacciones</p>
-                      </div>
+              {byBusiness.map((b) => (
+                <div key={b.businessId} className="flex items-center justify-between px-4 py-3 hover:bg-muted/30">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-lg bg-muted flex items-center justify-center shrink-0">
+                      <Building2 className="w-4 h-4 text-muted-foreground" />
                     </div>
-                    <p className="text-sm font-bold shrink-0">{fmt(amount)}</p>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{b.businessName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {fmtNumber(b.salesCount)} tx · gastos {fmt(b.expensesTotal)}
+                      </p>
+                    </div>
                   </div>
-                );
-              })}
+                  <div className="text-right shrink-0">
+                    <p className="text-sm font-bold">{fmt(b.salesTotal)}</p>
+                    <p className={`text-xs ${b.netTotal >= 0 ? "text-green-600" : "text-red-600"}`}>
+                      Neto {fmt(b.netTotal)}
+                    </p>
+                  </div>
+                </div>
+              ))}
             </div>
           </CardContent>
         </Card>
       )}
 
+      {/* OPERACIÓN DEL DÍA + columna lateral (mismo layout que tenías) */}
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-4">
           <Card>
@@ -256,6 +355,18 @@ export default async function ManagerOpsDashboard() {
 
           {foodServiceDays.length > 0 && (
             <FoodServicePanel hotelName={businesses[0]?.name ?? "Hotel"} days={foodServiceDays} />
+          )}
+
+          {/* Gastos en gráfica si hay datos */}
+          {mergedExpensesSeries.actual.length > 0 && (
+            <TimeSeriesChart
+              title="Gastos en el período"
+              data={mergedExpensesSeries.actual}
+              comparisonData={filters.comparisonRange ? mergedExpensesSeries.comparison : undefined}
+              type="line"
+              color="#ef4444"
+              height={220}
+            />
           )}
 
           {shiftsByBusiness.map(({ business, shifts, candidates }) => (
@@ -339,20 +450,36 @@ export default async function ManagerOpsDashboard() {
   );
 }
 
-function KpiCard({ color, label, icon, value, subtitle }: { color: string; label: string; icon: React.ReactNode; value: string; subtitle: string }) {
-  return (
-    <Card className={`border-l-4 border-l-${color}-500 py-0`}>
-      <CardHeader className="pb-1 pt-4 px-4 flex flex-row items-center justify-between space-y-0">
-        <CardTitle className="text-xs font-medium text-muted-foreground">{label}</CardTitle>
-        {icon}
-      </CardHeader>
-      <CardContent className="px-4 pb-4">
-        <div className="text-xl font-bold">{value}</div>
-        <p className="text-xs text-muted-foreground">{subtitle}</p>
-      </CardContent>
-    </Card>
-  );
+// ────────────────────────────────────────────────────────────
+// Helper: mergear actual + comparison en arrays alineados por índice
+// ────────────────────────────────────────────────────────────
+function mergeSeriesForChart(
+  actual: Array<{ label: string; value: number; count?: number; date: string }>,
+  comparison: Array<{ label: string; value: number; count?: number; date: string }>
+) {
+  return {
+    actual: actual.map((p) => ({
+      label: p.label,
+      value: p.value,
+      count: p.count,
+    })),
+    comparison: actual.map((_, i) => ({
+      label: comparison[i]?.label ?? "",
+      value: comparison[i]?.value ?? 0,
+      count: comparison[i]?.count,
+    })),
+  };
 }
+
+function searchParamsToQs(sp: Record<string, string | undefined>): string {
+  const entries = Object.entries(sp).filter(([_, v]) => v !== undefined) as [string, string][];
+  if (entries.length === 0) return "";
+  return "?" + entries.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+}
+
+// ────────────────────────────────────────────────────────────
+// Componentes inline existentes (sin cambios)
+// ────────────────────────────────────────────────────────────
 
 function Stat({ label, value, color }: { label: string; value: string | number; color?: string }) {
   return (<div><p className="text-xs text-muted-foreground">{label}</p><p className={`font-semibold ${color ?? ""}`}>{value}</p></div>);
