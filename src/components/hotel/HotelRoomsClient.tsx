@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Plus, Edit2, Trash2, Grid3x3, List, Search, AlertCircle,
   Wrench, Sparkles, Bed, BedDouble, Tent, Building, Eye,
@@ -82,6 +83,7 @@ export default function HotelRoomsClient(props: {
   rooms: Room[];
 }) {
   const { businesses, businessId, roomTypes, rooms } = props;
+  const router = useRouter();
 
   const [view, setView] = useState<"grid" | "list">("grid");
   const [search, setSearch] = useState("");
@@ -142,6 +144,26 @@ export default function HotelRoomsClient(props: {
 
   return (
     <div className="space-y-4">
+      {/* Selector de hotel */}
+      {businesses.length > 1 && (
+        <div className="flex items-center gap-2 rounded-lg border bg-white p-3">
+          <Label className="text-sm font-medium text-slate-600">Hotel:</Label>
+          <Select
+            value={businessId}
+            onValueChange={(id) => router.push(`/app/hotel/rooms?businessId=${id}`)}
+          >
+            <SelectTrigger className="w-[280px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {businesses.map((b) => (
+                <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
       {/* Header con stats */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
         {Object.entries(STATUS_CONFIG).map(([key, cfg]) => {

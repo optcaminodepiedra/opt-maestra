@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Sparkles, AlertCircle, CheckCircle2, Wrench, Bed,
   LogOut, LogIn, Search,
@@ -8,6 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { setRoomStatus, setRoomStatusBulk } from "@/lib/hotel.actions";
@@ -63,6 +65,7 @@ export default function HousekeepingClient(props: {
   todayCheckOuts: Reservation[];
 }) {
   const { businesses, businessId, rooms, todayArrivals, todayCheckOuts } = props;
+  const router = useRouter();
   const [search, setSearch] = useState("");
   const [filterFloor, setFilterFloor] = useState<string>("ALL");
   const [filterStatus, setFilterStatus] = useState<string>("ALL");
@@ -167,6 +170,26 @@ export default function HousekeepingClient(props: {
 
   return (
     <div className="space-y-4">
+      {/* Selector de hotel */}
+      {businesses.length > 1 && (
+        <div className="flex items-center gap-2 rounded-lg border bg-white p-3">
+          <Label className="text-sm font-medium text-slate-600">Hotel:</Label>
+          <Select
+            value={businessId ?? undefined}
+            onValueChange={(id) => router.push(`/app/hotel/housekeeping?businessId=${id}`)}
+          >
+            <SelectTrigger className="w-[280px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {businesses.map((b) => (
+                <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
       {/* Stats */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         <StatCard label="Salidas hoy" value={stats.checkoutsToday} icon={LogOut} color="#f59e0b" />
