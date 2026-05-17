@@ -3,7 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { ReservationStatus, RoomStatus, RoomTypeKind } from "@prisma/client";
-import { getHotelBusinesses, pickDefaultHotelBusinessId } from "@/lib/hotel.business";
+import { getHotelBusinesses, pickDefaultHotelForUser } from "@/lib/hotel.business";
 
 function rv() {
   revalidatePath("/app/hotel");
@@ -21,7 +21,7 @@ export async function getHotelBoot(input?: {
   to?: string;
 }) {
   const businesses = await getHotelBusinesses();
-  const businessId = input?.businessId || pickDefaultHotelBusinessId(businesses);
+  const businessId = input?.businessId || await pickDefaultHotelForUser(businesses);
 
   if (!businessId) {
     return {
@@ -620,7 +620,7 @@ function endOfDay(d = new Date()) {
 
 export async function getFrontDeskBoot(input?: { businessId?: string }) {
   const businesses = await getHotelBusinesses();
-  const businessId = input?.businessId || pickDefaultHotelBusinessId(businesses);
+  const businessId = input?.businessId || await pickDefaultHotelForUser(businesses);
 
   if (!businessId) {
     return {
@@ -671,7 +671,7 @@ export async function getFrontDeskBoot(input?: { businessId?: string }) {
 
 export async function getHousekeepingBoot(input?: { businessId?: string }) {
   const businesses = await getHotelBusinesses();
-  const businessId = input?.businessId || pickDefaultHotelBusinessId(businesses);
+  const businessId = input?.businessId || await pickDefaultHotelForUser(businesses);
 
   if (!businessId) {
     return { businesses, businessId: null, rooms: [], todayCheckOuts: [], todayArrivals: [] };
