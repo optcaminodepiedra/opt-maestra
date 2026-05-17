@@ -15,32 +15,18 @@ function rv() {
   revalidatePath("/app/hotel/reports");
 }
 
-function pickDefaultBusinessId(businesses: { id: string; name: string }[]) {
-  // Preferimos hoteles/contendedores por nombre (ajústalo si quieres)
-  const prefer = ["Hotel", "Tierra Adentro", "Camino de Piedra", "Rancho"];
-  for (const p of prefer) {
-    const hit = businesses.find((b) => (b.name || "").toLowerCase().includes(p.toLowerCase()));
-    if (hit) return hit.id;
-  }
-  return businesses[0]?.id ?? null;
-}
-
 export async function getHotelBoot(input?: {
   businessId?: string;
-  // rango opcional para reservas/reportes
-  from?: string; // ISO
-  to?: string;   // ISO
+  from?: string;
+  to?: string;
 }) {
   const businesses = await getHotelBusinesses();
-const businessId = input?.businessId || pickDefaultHotelBusinessId(businesses);
+  const businessId = input?.businessId || pickDefaultHotelBusinessId(businesses);
+
   if (!businessId) {
     return {
-      businesses,
-      businessId: null,
-      roomTypes: [],
-      rooms: [],
-      reservations: [],
-      stats: null,
+      businesses, businessId: null,
+      roomTypes: [], rooms: [], reservations: [], stats: null,
     };
   }
 
@@ -55,14 +41,19 @@ const businessId = input?.businessId || pickDefaultHotelBusinessId(businesses);
     include: { roomType: true },
   });
 
-  // rango para reservas (por default: hoy→+30 días)
-  const fromDate = input?.from ? new Date(input.from) : new Date();
-  const toDate = input?.to ? new Date(input.to) : new Date(Date.now() + 1000 * 60 * 60 * 24 * 30);
+  // 🔧 FIX BUG: rango MUCHO más amplio por default (3 meses atrás → 6 meses adelante)
+  // Resuelve el bug "reservas de junio no aparecen" cuando estás en mayo.
+  const now = new Date();
+  const fromDate = input?.from
+    ? new Date(input.from)
+    : new Date(now.getFullYear(), now.getMonth() - 3, 1);
+  const toDate = input?.to
+    ? new Date(input.to)
+    : new Date(now.getFullYear(), now.getMonth() + 6, 0, 23, 59, 59);
 
   const reservations = await prisma.hotelReservation.findMany({
     where: {
       businessId,
-      // intersecta rango
       AND: [
         { checkIn: { lt: toDate } },
         { checkOut: { gt: fromDate } },
@@ -78,33 +69,28 @@ const businessId = input?.businessId || pickDefaultHotelBusinessId(businesses);
     },
   });
 
-  // stats rápidas
   const totalActiveRooms = rooms.length;
   const byStatus = rooms.reduce(
-    (acc, r) => {
-      acc[r.status] = (acc[r.status] || 0) + 1;
-      return acc;
-    },
+    (acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; },
     {} as Record<string, number>
   );
 
   const occupied = byStatus["OCCUPIED"] || 0;
   const occupancyPct = totalActiveRooms ? Math.round((occupied / totalActiveRooms) * 100) : 0;
 
-  const stats = {
-    totalActiveRooms,
-    occupancyPct,
-    byStatus,
+  return {
+    businesses, businessId, roomTypes, rooms, reservations,
+    stats: { totalActiveRooms, occupancyPct, byStatus },
   };
-
-  return { businesses, businessId, roomTypes, rooms, reservations, stats };
 }
+
+// ─── Room Types CRUD ──────────────────────────────────────
 
 export async function createRoomType(input: {
   businessId: string;
   name: string;
   description?: string;
-  basePrice: number; // MXN
+  basePrice: number;
   capacity: number;
   kind?: RoomTypeKind;
 }) {
@@ -112,22 +98,52 @@ export async function createRoomType(input: {
   if (!input.name?.trim()) throw new Error("Falta nombre");
   const basePriceCents = Math.round((input.basePrice || 0) * 100);
   if (basePriceCents <= 0) throw new Error("Precio inválido");
-  const capacity = Math.max(1, Math.floor(input.capacity || 1));
-
   await prisma.hotelRoomType.create({
     data: {
       businessId: input.businessId,
       name: input.name.trim(),
       description: input.description?.trim() || null,
       basePriceCents,
-      capacity,
+      capacity: Math.max(1, Math.floor(input.capacity || 1)),
       kind: input.kind ?? "STANDARD",
     },
   });
-
   rv();
   return true;
 }
+
+export async function updateRoomType(input: {
+  id: string;
+  name?: string;
+  description?: string | null;
+  basePrice?: number;
+  capacity?: number;
+  kind?: RoomTypeKind;
+}) {
+  if (!input.id) throw new Error("Falta id");
+  const data: any = {};
+  if (typeof input.name === "string") data.name = input.name.trim();
+  if (typeof input.description !== "undefined") data.description = input.description?.trim() || null;
+  if (typeof input.capacity !== "undefined") data.capacity = Math.max(1, Math.floor(input.capacity || 1));
+  if (typeof input.kind !== "undefined") data.kind = input.kind;
+  if (typeof input.basePrice !== "undefined") {
+    const basePriceCents = Math.round((input.basePrice || 0) * 100);
+    if (basePriceCents <= 0) throw new Error("Precio inválido");
+    data.basePriceCents = basePriceCents;
+  }
+  await prisma.hotelRoomType.update({ where: { id: input.id }, data });
+  rv();
+  return true;
+}
+
+export async function deleteRoomType(input: { id: string }) {
+  if (!input.id) throw new Error("Falta id");
+  await prisma.hotelRoomType.delete({ where: { id: input.id } });
+  rv();
+  return true;
+}
+
+// ─── Rooms CRUD + Status ──────────────────────────────────
 
 export async function createRoom(input: {
   businessId: string;
@@ -140,7 +156,6 @@ export async function createRoom(input: {
   if (!input.businessId) throw new Error("Falta businessId");
   if (!input.roomTypeId) throw new Error("Falta tipo");
   if (!input.name?.trim()) throw new Error("Falta nombre");
-
   await prisma.hotelRoom.create({
     data: {
       businessId: input.businessId,
@@ -153,298 +168,6 @@ export async function createRoom(input: {
       isActive: true,
     },
   });
-
-  rv();
-  return true;
-}
-
-export async function setRoomStatus(input: { roomId: string; status: RoomStatus }) {
-  if (!input.roomId) throw new Error("Falta roomId");
-
-  await prisma.hotelRoom.update({
-    where: { id: input.roomId },
-    data: { status: input.status },
-  });
-
-  rv();
-  return true;
-}
-
-export async function upsertGuest(input: {
-  fullName: string;
-  phone?: string;
-  email?: string;
-  documentId?: string;
-}) {
-  const fullName = input.fullName?.trim();
-  if (!fullName) throw new Error("Falta nombre del huésped");
-
-  // heurística simple: si trae email, intenta match por email; si no, por nombre+tel
-  const email = input.email?.trim()?.toLowerCase() || null;
-  const phone = input.phone?.trim() || null;
-
-  const existing = await prisma.hotelGuest.findFirst({
-    where: email
-      ? { email }
-      : phone
-      ? { phone, fullName }
-      : { fullName },
-  });
-
-  if (existing) {
-    const upd = await prisma.hotelGuest.update({
-      where: { id: existing.id },
-      data: {
-        fullName,
-        phone,
-        email,
-        documentId: input.documentId?.trim() || null,
-      },
-    });
-    return upd;
-  }
-
-  return prisma.hotelGuest.create({
-    data: {
-      fullName,
-      phone,
-      email,
-      documentId: input.documentId?.trim() || null,
-    },
-  });
-}
-
-function overlaps(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date) {
-  // overlap si: aStart < bEnd && aEnd > bStart
-  return aStart < bEnd && aEnd > bStart;
-}
-
-export async function createReservation(input: {
-  businessId: string;
-  roomId: string;
-  userId: string;
-
-  guestFullName: string;
-  guestPhone?: string;
-  guestEmail?: string;
-  guestDocumentId?: string;
-
-  checkIn: string;  // ISO
-  checkOut: string; // ISO
-
-  adults?: number;
-  children?: number;
-
-  total: number;    // MXN
-  deposit?: number; // MXN
-  note?: string;
-}) {
-  if (!input.businessId) throw new Error("Falta businessId");
-  if (!input.roomId) throw new Error("Falta habitación");
-  if (!input.userId) throw new Error("Falta userId");
-
-  const checkIn = new Date(input.checkIn);
-  const checkOut = new Date(input.checkOut);
-  if (isNaN(checkIn.getTime())) throw new Error("checkIn inválido");
-  if (isNaN(checkOut.getTime())) throw new Error("checkOut inválido");
-  if (checkOut <= checkIn) throw new Error("checkOut debe ser > checkIn");
-
-  const totalCents = Math.round((input.total || 0) * 100);
-  if (!Number.isFinite(totalCents) || totalCents <= 0) throw new Error("Total inválido");
-
-  const depositCents = Math.max(0, Math.round((input.deposit || 0) * 100));
-
-  // validar room existe y pertenece al business
-  const room = await prisma.hotelRoom.findUnique({ where: { id: input.roomId } });
-  if (!room || room.businessId !== input.businessId) throw new Error("Habitación inválida");
-
-  // validar disponibilidad (sin overbooking por ahora)
-  const existing = await prisma.hotelReservation.findMany({
-    where: {
-      businessId: input.businessId,
-      roomId: input.roomId,
-      status: { in: ["PENDING", "CONFIRMED", "CHECKED_IN"] },
-      AND: [
-        { checkIn: { lt: checkOut } },
-        { checkOut: { gt: checkIn } },
-      ],
-    },
-    select: { id: true, checkIn: true, checkOut: true, status: true },
-  });
-
-  for (const r of existing) {
-    // overlap si: aStart < bEnd && aEnd > bStart
-    if (checkIn < r.checkOut && checkOut > r.checkIn) {
-      throw new Error("La habitación ya tiene reserva en ese rango");
-    }
-  }
-
-  const guest = await upsertGuest({
-    fullName: input.guestFullName,
-    phone: input.guestPhone,
-    email: input.guestEmail,
-    documentId: input.guestDocumentId,
-  });
-
-  await prisma.hotelReservation.create({
-    data: {
-      businessId: input.businessId,
-      roomId: input.roomId,
-      guestId: guest.id,
-      userId: input.userId,
-      checkIn: checkIn,
-      checkOut: checkOut,
-      status: "CONFIRMED",
-      adults: Math.max(1, Math.floor(input.adults || 1)),
-      children: Math.max(0, Math.floor(input.children || 0)),
-      totalCents,
-      depositCents,
-      notes: input.note?.trim() || null,
-  },
-});
-
-rv();
-return true;
-}
-
-export async function checkInReservation(input: { reservationId: string }) {
-  if (!input.reservationId) throw new Error("Falta reservationId");
-
-  const r = await prisma.hotelReservation.findUnique({
-    where: { id: input.reservationId },
-    include: { room: true },
-  });
-  if (!r) throw new Error("Reserva no existe");
-  if (r.status !== "CONFIRMED" && r.status !== "PENDING") throw new Error("Reserva no está lista para check-in");
-
-  await prisma.$transaction([
-    prisma.hotelReservation.update({
-      where: { id: r.id },
-      data: { status: "CHECKED_IN" },
-    }),
-    prisma.hotelRoom.update({
-      where: { id: r.roomId },
-      data: { status: "OCCUPIED" },
-    }),
-  ]);
-
-  
-  rv();
-  return true;
-}
-
-export async function checkOutReservation(input: { reservationId: string }) {
-  if (!input.reservationId) throw new Error("Falta reservationId");
-
-  const r = await prisma.hotelReservation.findUnique({
-    where: { id: input.reservationId },
-    include: { room: true },
-  });
-  if (!r) throw new Error("Reserva no existe");
-  if (r.status !== "CHECKED_IN") throw new Error("Solo se puede hacer check-out de una reserva CHECKED_IN");
-
-  await prisma.$transaction([
-    prisma.hotelReservation.update({
-      where: { id: r.id },
-      data: { status: "CHECKED_OUT" },
-    }),
-    prisma.hotelRoom.update({
-      where: { id: r.roomId },
-      data: { status: "DIRTY" }, // al salir queda sucia por default
-    }),
-  ]);
-
-  rv();
-  return true;
-}
-
-export async function cancelReservation(input: { reservationId: string; reason?: string }) {
-  if (!input.reservationId) throw new Error("Falta reservationId");
-
-  await prisma.hotelReservation.update({
-    where: { id: input.reservationId },
-    data: { status: "CANCELED", notes: input.reason?.trim() || null },
-  });
-
-  rv();
-  return true;
-}
-
-export async function addChargeToReservation(input: {
-  reservationId: string;
-  concept: string;
-  amount: number; // MXN
-}) {
-  if (!input.reservationId) throw new Error("Falta reservationId");
-  if (!input.concept?.trim()) throw new Error("Falta concepto");
-  const amountCents = Math.round((input.amount || 0) * 100);
-  if (amountCents <= 0) throw new Error("Monto inválido");
-
-  const reservation = await prisma.hotelReservation.findUnique({
-    where: { id: input.reservationId },
-    select: { businessId: true },
-  });
-
-  if (!reservation) throw new Error("Reservación no encontrada");
-
-  await prisma.hotelCharge.create({
-    data: {
-      reservationId: input.reservationId,
-      concept: input.concept.trim(),
-      amountCents,
-      businessId: reservation.businessId,
-    },
-  });
-
-  rv();
-  return true;
-}
-
-export async function setReservationStatus(input: { reservationId: string; status: ReservationStatus }) {
-  if (!input.reservationId) throw new Error("Falta reservationId");
-  await prisma.hotelReservation.update({
-    where: { id: input.reservationId },
-    data: { status: input.status },
-  });
-  rv();
-  return true;
-}
-
-// ==============================
-// ✅ UPDATES / DELETES RoomTypes / Rooms
-// ==============================
-
-export async function updateRoomType(input: {
-  id: string;
-  name?: string;
-  description?: string | null;
-  basePrice?: number; // MXN
-  capacity?: number;
-  kind?: RoomTypeKind;
-}) {
-  if (!input.id) throw new Error("Falta id");
-
-  const data: any = {};
-  if (typeof input.name === "string") data.name = input.name.trim();
-  if (typeof input.description !== "undefined") data.description = input.description ? input.description.trim() : null;
-  if (typeof input.capacity !== "undefined") data.capacity = Math.max(1, Math.floor(input.capacity || 1));
-  if (typeof input.kind !== "undefined") data.kind = input.kind;
-
-  if (typeof input.basePrice !== "undefined") {
-    const basePriceCents = Math.round((input.basePrice || 0) * 100);
-    if (basePriceCents <= 0) throw new Error("Precio inválido");
-    data.basePriceCents = basePriceCents;
-  }
-
-  await prisma.hotelRoomType.update({ where: { id: input.id }, data });
-  rv();
-  return true;
-}
-
-export async function deleteRoomType(input: { id: string }) {
-  if (!input.id) throw new Error("Falta id");
-  // si tiene rooms asociados, truena. (mejor que sea explícito)
-  await prisma.hotelRoomType.delete({ where: { id: input.id } });
   rv();
   return true;
 }
@@ -459,32 +182,161 @@ export async function updateRoom(input: {
   isActive?: boolean;
 }) {
   if (!input.id) throw new Error("Falta id");
-
   const data: any = {};
   if (typeof input.name === "string") data.name = input.name.trim();
-  if (typeof input.floor !== "undefined") data.floor = input.floor ? input.floor.trim() : null;
-  if (typeof input.area !== "undefined") data.area = input.area ? input.area.trim() : null;
+  if (typeof input.floor !== "undefined") data.floor = input.floor?.trim() || null;
+  if (typeof input.area !== "undefined") data.area = input.area?.trim() || null;
   if (typeof input.sortOrder !== "undefined") data.sortOrder = input.sortOrder ?? 0;
   if (typeof input.roomTypeId === "string") data.roomTypeId = input.roomTypeId;
   if (typeof input.isActive !== "undefined") data.isActive = !!input.isActive;
-
   await prisma.hotelRoom.update({ where: { id: input.id }, data });
   rv();
   return true;
 }
 
-// ==============================
-// ✅ RESERVATIONS: update / no-show
-// ==============================
+export async function setRoomStatus(input: { roomId: string; status: RoomStatus }) {
+  if (!input.roomId) throw new Error("Falta roomId");
+  await prisma.hotelRoom.update({
+    where: { id: input.roomId },
+    data: { status: input.status },
+  });
+  rv();
+  return true;
+}
+
+/** 🆕 Marcar varias habitaciones a la vez (housekeeping). */
+export async function setRoomStatusBulk(input: { roomIds: string[]; status: RoomStatus }) {
+  if (!input.roomIds?.length) throw new Error("Falta lista de habitaciones");
+  await prisma.hotelRoom.updateMany({
+    where: { id: { in: input.roomIds } },
+    data: { status: input.status },
+  });
+  rv();
+  return true;
+}
+
+// ─── Guests ──────────────────────────────────────────────
+
+export async function upsertGuest(input: {
+  fullName: string;
+  phone?: string;
+  email?: string;
+  documentId?: string;
+}) {
+  const fullName = input.fullName?.trim();
+  if (!fullName) throw new Error("Falta nombre del huésped");
+  const email = input.email?.trim()?.toLowerCase() || null;
+  const phone = input.phone?.trim() || null;
+
+  const existing = await prisma.hotelGuest.findFirst({
+    where: email ? { email } : phone ? { phone, fullName } : { fullName },
+  });
+
+  if (existing) {
+    return prisma.hotelGuest.update({
+      where: { id: existing.id },
+      data: { fullName, phone, email, documentId: input.documentId?.trim() || null },
+    });
+  }
+
+  return prisma.hotelGuest.create({
+    data: { fullName, phone, email, documentId: input.documentId?.trim() || null },
+  });
+}
+
+// ─── Reservations ────────────────────────────────────────
+
+export async function createReservation(input: {
+  businessId: string;
+  roomId: string;
+  userId: string;
+  guestFullName: string;
+  guestPhone?: string;
+  guestEmail?: string;
+  guestDocumentId?: string;
+  checkIn: string;
+  checkOut: string;
+  adults?: number;
+  children?: number;
+  total: number;
+  deposit?: number;
+  note?: string;
+  /** 🆕 Si true, hace check-in inmediato (walk-in). */
+  walkIn?: boolean;
+}) {
+  if (!input.businessId) throw new Error("Falta businessId");
+  if (!input.roomId) throw new Error("Falta habitación");
+  if (!input.userId) throw new Error("Falta userId");
+
+  const checkIn = new Date(input.checkIn);
+  const checkOut = new Date(input.checkOut);
+  if (isNaN(checkIn.getTime())) throw new Error("checkIn inválido");
+  if (isNaN(checkOut.getTime())) throw new Error("checkOut inválido");
+  if (checkOut <= checkIn) throw new Error("checkOut debe ser > checkIn");
+
+  const totalCents = Math.round((input.total || 0) * 100);
+  if (!Number.isFinite(totalCents) || totalCents <= 0) throw new Error("Total inválido");
+  const depositCents = Math.max(0, Math.round((input.deposit || 0) * 100));
+
+  const room = await prisma.hotelRoom.findUnique({ where: { id: input.roomId } });
+  if (!room || room.businessId !== input.businessId) throw new Error("Habitación inválida");
+
+  const existing = await prisma.hotelReservation.findMany({
+    where: {
+      businessId: input.businessId,
+      roomId: input.roomId,
+      status: { in: ["PENDING", "CONFIRMED", "CHECKED_IN"] },
+      AND: [{ checkIn: { lt: checkOut } }, { checkOut: { gt: checkIn } }],
+    },
+    select: { id: true },
+  });
+  if (existing.length > 0) {
+    throw new Error("La habitación ya tiene reserva en ese rango");
+  }
+
+  const guest = await upsertGuest({
+    fullName: input.guestFullName,
+    phone: input.guestPhone,
+    email: input.guestEmail,
+    documentId: input.guestDocumentId,
+  });
+
+  const status: ReservationStatus = input.walkIn ? "CHECKED_IN" : "CONFIRMED";
+
+  const result = await prisma.$transaction([
+    prisma.hotelReservation.create({
+      data: {
+        businessId: input.businessId,
+        roomId: input.roomId,
+        guestId: guest.id,
+        userId: input.userId,
+        checkIn, checkOut, status,
+        adults: Math.max(1, Math.floor(input.adults || 1)),
+        children: Math.max(0, Math.floor(input.children || 0)),
+        totalCents, depositCents,
+        notes: input.note?.trim() || null,
+      },
+    }),
+    ...(input.walkIn ? [
+      prisma.hotelRoom.update({
+        where: { id: input.roomId },
+        data: { status: "OCCUPIED" as RoomStatus },
+      }),
+    ] : []),
+  ]);
+
+  rv();
+  return { ok: true, reservationId: result[0].id };
+}
 
 export async function updateReservation(input: {
   id: string;
-  checkIn?: string;   // ISO
-  checkOut?: string;  // ISO
+  checkIn?: string;
+  checkOut?: string;
   adults?: number;
   children?: number;
-  total?: number;   // MXN
-  deposit?: number; // MXN
+  total?: number;
+  deposit?: number;
   note?: string | null;
   roomId?: string;
 }) {
@@ -494,15 +346,11 @@ export async function updateReservation(input: {
   if (!r) throw new Error("Reserva no existe");
 
   const data: any = {};
-
-  // room change + disponibilidad
   const nextRoomId = input.roomId ?? r.roomId;
-
   const nextCheckIn = input.checkIn ? new Date(input.checkIn) : r.checkIn;
   const nextCheckOut = input.checkOut ? new Date(input.checkOut) : r.checkOut;
   if (nextCheckOut <= nextCheckIn) throw new Error("checkOut debe ser > checkIn");
 
-  // validar disponibilidad (excluyendo esta reserva)
   const clashes = await prisma.hotelReservation.findMany({
     where: {
       businessId: r.businessId,
@@ -518,10 +366,8 @@ export async function updateReservation(input: {
   data.roomId = nextRoomId;
   data.checkIn = nextCheckIn;
   data.checkOut = nextCheckOut;
-
   if (typeof input.adults !== "undefined") data.adults = Math.max(1, Math.floor(input.adults || 1));
   if (typeof input.children !== "undefined") data.children = Math.max(0, Math.floor(input.children || 0));
-
   if (typeof input.total !== "undefined") {
     const totalCents = Math.round((input.total || 0) * 100);
     if (totalCents <= 0) throw new Error("Total inválido");
@@ -539,6 +385,178 @@ export async function updateReservation(input: {
   return true;
 }
 
+/** 🆕 Transferir reserva a otra habitación. */
+export async function transferReservation(input: {
+  reservationId: string;
+  newRoomId: string;
+}) {
+  if (!input.reservationId) throw new Error("Falta reservationId");
+  if (!input.newRoomId) throw new Error("Falta nueva habitación");
+
+  const r = await prisma.hotelReservation.findUnique({ where: { id: input.reservationId } });
+  if (!r) throw new Error("Reserva no existe");
+  if (r.roomId === input.newRoomId) throw new Error("Ya está en esa habitación");
+
+  const newRoom = await prisma.hotelRoom.findUnique({ where: { id: input.newRoomId } });
+  if (!newRoom) throw new Error("Habitación destino no existe");
+  if (newRoom.businessId !== r.businessId) {
+    throw new Error("La habitación destino pertenece a otro hotel");
+  }
+
+  const clashes = await prisma.hotelReservation.findMany({
+    where: {
+      businessId: r.businessId,
+      roomId: input.newRoomId,
+      id: { not: r.id },
+      status: { in: ["PENDING", "CONFIRMED", "CHECKED_IN"] },
+      AND: [{ checkIn: { lt: r.checkOut } }, { checkOut: { gt: r.checkIn } }],
+    },
+    select: { id: true },
+  });
+  if (clashes.length) throw new Error("La nueva habitación tiene una reserva en ese rango");
+
+  const ops: any[] = [
+    prisma.hotelReservation.update({
+      where: { id: r.id },
+      data: { roomId: input.newRoomId },
+    }),
+  ];
+
+  if (r.status === "CHECKED_IN") {
+    ops.push(
+      prisma.hotelRoom.update({
+        where: { id: r.roomId },
+        data: { status: "DIRTY" as RoomStatus },
+      }),
+      prisma.hotelRoom.update({
+        where: { id: input.newRoomId },
+        data: { status: "OCCUPIED" as RoomStatus },
+      })
+    );
+  }
+
+  await prisma.$transaction(ops);
+  rv();
+  return true;
+}
+
+/** 🆕 Extender estadía: agrega noches al checkOut. */
+export async function extendReservation(input: {
+  reservationId: string;
+  additionalNights: number;
+  pricePerNight?: number;
+}) {
+  if (!input.reservationId) throw new Error("Falta reservationId");
+  if (!input.additionalNights || input.additionalNights <= 0) {
+    throw new Error("Noches inválidas");
+  }
+
+  const r = await prisma.hotelReservation.findUnique({ where: { id: input.reservationId } });
+  if (!r) throw new Error("Reserva no existe");
+
+  const newCheckOut = new Date(r.checkOut);
+  newCheckOut.setDate(newCheckOut.getDate() + input.additionalNights);
+
+  const clashes = await prisma.hotelReservation.findMany({
+    where: {
+      businessId: r.businessId,
+      roomId: r.roomId,
+      id: { not: r.id },
+      status: { in: ["PENDING", "CONFIRMED", "CHECKED_IN"] },
+      AND: [{ checkIn: { lt: newCheckOut } }, { checkOut: { gt: r.checkOut } }],
+    },
+    select: { id: true },
+  });
+  if (clashes.length > 0) {
+    throw new Error("La habitación tiene otra reserva en las noches extras");
+  }
+
+  const ops: any[] = [
+    prisma.hotelReservation.update({
+      where: { id: r.id },
+      data: { checkOut: newCheckOut },
+    }),
+  ];
+
+  if (input.pricePerNight && input.pricePerNight > 0) {
+    const totalExtra = Math.round(input.pricePerNight * input.additionalNights * 100);
+    ops.push(
+      prisma.hotelCharge.create({
+        data: {
+          reservationId: r.id,
+          concept: `Extensión ${input.additionalNights} noche(s)`,
+          amountCents: totalExtra,
+          businessId: r.businessId,
+        },
+      })
+    );
+  }
+
+  await prisma.$transaction(ops);
+  rv();
+  return true;
+}
+
+export async function checkInReservation(input: { reservationId: string }) {
+  if (!input.reservationId) throw new Error("Falta reservationId");
+
+  const r = await prisma.hotelReservation.findUnique({
+    where: { id: input.reservationId },
+    include: { room: true },
+  });
+  if (!r) throw new Error("Reserva no existe");
+  if (r.status !== "CONFIRMED" && r.status !== "PENDING") {
+    throw new Error("Reserva no está lista para check-in");
+  }
+
+  await prisma.$transaction([
+    prisma.hotelReservation.update({
+      where: { id: r.id }, data: { status: "CHECKED_IN" },
+    }),
+    prisma.hotelRoom.update({
+      where: { id: r.roomId }, data: { status: "OCCUPIED" },
+    }),
+  ]);
+
+  rv();
+  return true;
+}
+
+export async function checkOutReservation(input: { reservationId: string }) {
+  if (!input.reservationId) throw new Error("Falta reservationId");
+
+  const r = await prisma.hotelReservation.findUnique({
+    where: { id: input.reservationId },
+    include: { room: true },
+  });
+  if (!r) throw new Error("Reserva no existe");
+  if (r.status !== "CHECKED_IN") {
+    throw new Error("Solo se puede hacer check-out de una reserva CHECKED_IN");
+  }
+
+  await prisma.$transaction([
+    prisma.hotelReservation.update({
+      where: { id: r.id }, data: { status: "CHECKED_OUT" },
+    }),
+    prisma.hotelRoom.update({
+      where: { id: r.roomId }, data: { status: "DIRTY" },
+    }),
+  ]);
+
+  rv();
+  return true;
+}
+
+export async function cancelReservation(input: { reservationId: string; reason?: string }) {
+  if (!input.reservationId) throw new Error("Falta reservationId");
+  await prisma.hotelReservation.update({
+    where: { id: input.reservationId },
+    data: { status: "CANCELED", notes: input.reason?.trim() || null },
+  });
+  rv();
+  return true;
+}
+
 export async function markNoShow(input: { reservationId: string }) {
   if (!input.reservationId) throw new Error("Falta id");
   await prisma.hotelReservation.update({
@@ -549,9 +567,49 @@ export async function markNoShow(input: { reservationId: string }) {
   return true;
 }
 
-// ==============================
-// ✅ FRONT DESK BOOT (Llegadas / Salidas / In-house)
-// ==============================
+export async function setReservationStatus(input: {
+  reservationId: string;
+  status: ReservationStatus;
+}) {
+  if (!input.reservationId) throw new Error("Falta reservationId");
+  await prisma.hotelReservation.update({
+    where: { id: input.reservationId },
+    data: { status: input.status },
+  });
+  rv();
+  return true;
+}
+
+export async function addChargeToReservation(input: {
+  reservationId: string;
+  concept: string;
+  amount: number;
+}) {
+  if (!input.reservationId) throw new Error("Falta reservationId");
+  if (!input.concept?.trim()) throw new Error("Falta concepto");
+  const amountCents = Math.round((input.amount || 0) * 100);
+  if (amountCents <= 0) throw new Error("Monto inválido");
+
+  const reservation = await prisma.hotelReservation.findUnique({
+    where: { id: input.reservationId },
+    select: { businessId: true },
+  });
+  if (!reservation) throw new Error("Reservación no encontrada");
+
+  await prisma.hotelCharge.create({
+    data: {
+      reservationId: input.reservationId,
+      concept: input.concept.trim(),
+      amountCents,
+      businessId: reservation.businessId,
+    },
+  });
+
+  rv();
+  return true;
+}
+
+// ─── Front Desk Boot ─────────────────────────────────────
 
 function startOfDay(d = new Date()) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
@@ -562,48 +620,88 @@ function endOfDay(d = new Date()) {
 
 export async function getFrontDeskBoot(input?: { businessId?: string }) {
   const businesses = await getHotelBusinesses();
-const businessId = input?.businessId || pickDefaultHotelBusinessId(businesses);
+  const businessId = input?.businessId || pickDefaultHotelBusinessId(businesses);
+
   if (!businessId) {
-    return { businesses, businessId: null, arrivals: [], departures: [], inHouse: [], rooms: [] };
+    return {
+      businesses, businessId: null,
+      arrivals: [], departures: [], inHouse: [], rooms: [], roomTypes: [],
+    };
   }
 
-  const rooms = await prisma.hotelRoom.findMany({
-    where: { businessId, isActive: true },
-    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-    include: { roomType: true },
-  });
+  const [rooms, roomTypes, arrivals, departures, inHouse] = await Promise.all([
+    prisma.hotelRoom.findMany({
+      where: { businessId, isActive: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      include: { roomType: true },
+    }),
+    prisma.hotelRoomType.findMany({
+      where: { businessId },
+      orderBy: [{ kind: "asc" }, { name: "asc" }],
+    }),
+    prisma.hotelReservation.findMany({
+      where: {
+        businessId,
+        status: { in: ["PENDING", "CONFIRMED"] },
+        checkIn: { gte: startOfDay(), lte: endOfDay() },
+      },
+      orderBy: [{ checkIn: "asc" }],
+      include: { guest: true, room: { include: { roomType: true } }, charges: true },
+    }),
+    prisma.hotelReservation.findMany({
+      where: {
+        businessId,
+        status: "CHECKED_IN",
+        checkOut: { gte: startOfDay(), lte: endOfDay() },
+      },
+      orderBy: [{ checkOut: "asc" }],
+      include: { guest: true, room: { include: { roomType: true } }, charges: true },
+    }),
+    prisma.hotelReservation.findMany({
+      where: { businessId, status: "CHECKED_IN" },
+      orderBy: [{ checkIn: "asc" }],
+      include: { guest: true, room: { include: { roomType: true } }, charges: true },
+    }),
+  ]);
 
-  const dayStart = startOfDay(new Date());
-  const dayEnd = endOfDay(new Date());
+  return { businesses, businessId, arrivals, departures, inHouse, rooms, roomTypes };
+}
 
-  // Llegadas: check-in date hoy, status CONFIRMED/PENDING
-  const arrivals = await prisma.hotelReservation.findMany({
-    where: {
-      businessId,
-      status: { in: ["PENDING", "CONFIRMED"] },
-      checkIn: { gte: dayStart, lte: dayEnd },
-    },
-    orderBy: [{ checkIn: "asc" }],
-    include: { guest: true, room: { include: { roomType: true } }, charges: true },
-  });
+// ─── Housekeeping Boot ────────────────────────────────────
 
-  // Salidas: check-out hoy, status CHECKED_IN
-  const departures = await prisma.hotelReservation.findMany({
-    where: {
-      businessId,
-      status: "CHECKED_IN",
-      checkOut: { gte: dayStart, lte: dayEnd },
-    },
-    orderBy: [{ checkOut: "asc" }],
-    include: { guest: true, room: { include: { roomType: true } }, charges: true },
-  });
+export async function getHousekeepingBoot(input?: { businessId?: string }) {
+  const businesses = await getHotelBusinesses();
+  const businessId = input?.businessId || pickDefaultHotelBusinessId(businesses);
 
-  // Hospedados: CHECKED_IN (aunque no salgan hoy)
-  const inHouse = await prisma.hotelReservation.findMany({
-    where: { businessId, status: "CHECKED_IN" },
-    orderBy: [{ checkIn: "asc" }],
-    include: { guest: true, room: { include: { roomType: true } }, charges: true },
-  });
+  if (!businessId) {
+    return { businesses, businessId: null, rooms: [], todayCheckOuts: [], todayArrivals: [] };
+  }
 
-  return { businesses, businessId, arrivals, departures, inHouse, rooms };
+  const [rooms, todayCheckOuts, todayArrivals] = await Promise.all([
+    prisma.hotelRoom.findMany({
+      where: { businessId, isActive: true },
+      orderBy: [{ floor: "asc" }, { sortOrder: "asc" }, { name: "asc" }],
+      include: { roomType: true },
+    }),
+    prisma.hotelReservation.findMany({
+      where: {
+        businessId,
+        status: "CHECKED_IN",
+        checkOut: { gte: startOfDay(), lte: endOfDay() },
+      },
+      orderBy: [{ checkOut: "asc" }],
+      include: { guest: true, room: { include: { roomType: true } } },
+    }),
+    prisma.hotelReservation.findMany({
+      where: {
+        businessId,
+        status: { in: ["PENDING", "CONFIRMED"] },
+        checkIn: { gte: startOfDay(), lte: endOfDay() },
+      },
+      orderBy: [{ checkIn: "asc" }],
+      include: { guest: true, room: { include: { roomType: true } } },
+    }),
+  ]);
+
+  return { businesses, businessId, rooms, todayCheckOuts, todayArrivals };
 }
