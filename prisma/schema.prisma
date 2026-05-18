@@ -127,6 +127,11 @@ inventoryMovesDestination  InventoryMovement[] @relation("InventoryMovementDesti
   hotelPayments     HotelPayment[]
   accountsPayables  AccountsPayable[]
 
+    saleLines              SaleLine[]
+  salePayments           SalePayment[]
+  softRestaurantShifts   SoftRestaurantShift[]
+  externalUserMappings   ExternalUserMapping[]
+
   scheduledShifts ScheduledShift[] @relation("BusinessScheduledShifts")
 
   userAccess UserBusinessAccess[]
@@ -188,6 +193,7 @@ model User {
   primaryBusinessId String?
   primaryBusiness   Business? @relation("PrimaryBusiness", fields: [primaryBusinessId], references: [id])
 
+  externalUserMappings ExternalUserMapping[]
   sales                Sale[]
   expenses             Expense[]
   shifts               Shift[]
@@ -284,10 +290,30 @@ model Sale {
   concept     String
   createdAt   DateTime      @default(now())
 
+    mesaName         String?
+  noPersonas       Int?
+  externalWaiterId String?
+  externalShiftId  String?
+  openedAt         DateTime?
+  closedAt         DateTime?
+  totalItems       Float?
+  subtotalCents    Int?
+  discountCents    Int?
+  tipCents         Int?
+  isCanceled       Boolean   @default(false)
+  canceledAt       DateTime?
+  canceledReason   String?
+  ticketRef        String?
+  serviceType      String?
+
+
   business  Business  @relation(fields: [businessId], references: [id])
   cashpoint Cashpoint @relation(fields: [cashpointId], references: [id])
   shift     Shift?    @relation(fields: [shiftId], references: [id])
   user      User      @relation(fields: [userId], references: [id])
+
+    lines    SaleLine[]
+  payments SalePayment[]
 
   importBatchId String?
   importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
@@ -509,6 +535,10 @@ model MenuItem {
   description String?
   isFeatured  Boolean @default(false)
 
+    groupCode  String?
+  groupName  String?
+  isPhantom  Boolean @default(false)
+
   name       String
   category   String
   priceCents Int
@@ -533,6 +563,7 @@ model MenuItem {
   @@index([businessId, category])
   @@index([businessId, station])
   @@index([cashpointId])
+    saleLines  SaleLine[]
 }
 
 model RestaurantOrder {
@@ -1175,6 +1206,10 @@ model ImportBatch {
   revertedBy User?     @relation("ImportBatchRevertedBy", fields: [revertedById], references: [id])
   business   Business? @relation(fields: [businessId], references: [id])
 
+
+  saleLines             SaleLine[]
+  salePayments          SalePayment[]
+  softRestaurantShifts  SoftRestaurantShift[]
   sales             Sale[]
   expenses          Expense[]
   withdrawals       Withdrawal[]
@@ -1407,4 +1442,123 @@ model MenuItemModifierGroup {
 
   @@unique([menuItemId, modifierGroupId])
   @@index([menuItemId])
+}
+
+model SaleLine {
+  id          String   @id @default(cuid())
+  saleId      String
+  businessId  String
+
+  menuItemId  String?
+
+  // snapshot de datos del producto al momento de la venta
+  productCode String?
+  productName String
+  groupCode   String?
+  groupName   String?
+
+  // cantidades y montos (en centavos para ints)
+  qty             Float @default(1)
+  unitPriceCents  Int   @default(0)
+  discountCents   Int   @default(0)
+  taxPercent      Float @default(0)
+  amountCents     Int   @default(0)  // qty * (unit - discount) por item
+
+  // datos extra de SoftRestaurant
+  movimiento           Int?
+  comanda              String?
+  comentario           String?
+  estacion             String?
+  isModifier           Boolean @default(false)
+  isCompoundChild      Boolean @default(false)
+  isCompoundPrincipal  Boolean @default(false)
+  modifiers            Json?
+  soldAt               DateTime?
+  externalWaiterId     String?
+
+  // trazabilidad de import
+  importBatchId      String?
+  externalSource     String?  // "softrestaurant"
+  externalFolioDet   String?  // cheqdet.foliodet
+  externalMovimiento Int?
+
+  createdAt DateTime @default(now())
+
+  sale        Sale          @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  business    Business      @relation(fields: [businessId], references: [id])
+  menuItem    MenuItem?     @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
+  importBatch ImportBatch?  @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+
+  @@index([saleId])
+  @@index([businessId])
+  @@index([menuItemId])
+  @@index([productCode])
+  @@index([groupCode])
+  @@index([importBatchId])
+  @@index([externalSource, externalFolioDet])
+}
+
+model ExternalUserMapping {
+  id               String   @id @default(cuid())
+  businessId       String
+  externalSource   String   // "softrestaurant"
+  externalUserId   String   // ej "12"
+  externalUserName String?  // ej "ANDRES"
+  userId           String?  // null hasta que se mapee a un User real
+  kind             String   @default("WAITER") // WAITER, CASHIER, COOK, etc.
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([businessId, externalSource, externalUserId, kind])
+  @@index([businessId])
+  @@index([userId])
+}
+
+model SoftRestaurantShift {
+  id              String   @id @default(cuid())
+  businessId      String
+  externalSource  String   @default("softrestaurant")
+  externalShiftId String
+  openedAt        DateTime?
+  closedAt        DateTime?
+  cashierName     String?
+  station         String?
+  fondoCents      Int      @default(0)
+  cashCents       Int      @default(0)
+  cardCents       Int      @default(0)
+  valesCents      Int      @default(0)
+  creditCents     Int      @default(0)
+  importBatchId   String?
+  createdAt       DateTime @default(now())
+
+  business    Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  importBatch ImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+
+  @@unique([businessId, externalShiftId])
+  @@index([businessId])
+  @@index([openedAt])
+}
+
+model SalePayment {
+  id                 String   @id @default(cuid())
+  saleId             String
+  businessId         String
+  externalPaymentType String? // "EF", "VISA", "MASTER", etc.
+  method             String?  // "CASH", "CARD", "TRANSFER" normalizado
+  amountCents        Int      @default(0)
+  tipCents           Int      @default(0)
+  reference          String?
+  exchangeRate       Float    @default(1.0)
+  importBatchId      String?
+  createdAt          DateTime @default(now())
+
+  sale        Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  business    Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  importBatch ImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+
+  @@index([saleId])
+  @@index([businessId])
 }
