@@ -45,7 +45,7 @@ const FILE_IDENTITY: Record<string, { icon: any; required: boolean; description:
 };
 
 // Tamaño de chunk para enviar al servidor
-const CHEQUES_PER_CHUNK = 100;  // 100 cheques + sus líneas + sus pagos por llamada
+const CHEQUES_PER_CHUNK = 50;  // 100 cheques + sus líneas + sus pagos por llamada
 
 export default function ImportsV2Client(props: { businesses: Business[] }) {
   const router = useRouter();
