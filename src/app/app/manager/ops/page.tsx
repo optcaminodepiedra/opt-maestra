@@ -172,6 +172,9 @@ export default async function ManagerOpsDashboard({
           <Button variant="outline" size="sm" asChild>
             <Link href="/app/manager/ops/reports"><FileText className="w-4 h-4 mr-1.5" /> Reportes</Link>
           </Button>
+          <Button variant="outline" size="sm" asChild className="border-purple-300 text-purple-700 hover:bg-purple-50">
+            <Link href="/app/manager/ops/products-report"><Package className="w-4 h-4 mr-1.5" /> Productos</Link>
+          </Button>
           <Button size="sm" asChild>
             <Link href="/app/manager/ops/schedule"><Calendar className="w-4 h-4 mr-1.5" /> Turnos</Link>
           </Button>
@@ -433,6 +436,7 @@ export default async function ManagerOpsDashboard({
               <QuickBtn icon={<Package className="w-3.5 h-3.5 mr-1.5" />} label="Inventario" href="/app/manager/ops/inventory" />
               <QuickBtn icon={<ClipboardList className="w-3.5 h-3.5 mr-1.5" />} label="Requisiciones" href="/app/manager/ops/requisitions" />
               <QuickBtn icon={<FileText className="w-3.5 h-3.5 mr-1.5" />} label="Reportes" href="/app/manager/ops/reports" />
+              <QuickBtn icon={<Package className="w-3.5 h-3.5 mr-1.5" />} label="Productos" href="/app/manager/ops/products-report" />
               <QuickBtn icon={<HelpCircle className="w-3.5 h-3.5 mr-1.5" />} label="Ayuda" href="/app/manager/ops/help" />
             </CardContent>
           </Card>
