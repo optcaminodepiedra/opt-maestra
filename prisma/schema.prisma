@@ -644,10 +644,13 @@ model InventoryItem {
   unit       StockUnit @default(PIECE)
 
   minQty    Int @default(0)
+ maxQty    Int @default(0)              
   onHandQty Int @default(0)
 
   lastPriceCents Int     @default(0)
   supplierName   String?
+
+notes     String?                      
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())

@@ -1,13 +1,15 @@
 "use client";
 
 import { useState, useTransition, useMemo } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   Package, Search, AlertTriangle, AlertCircle, TrendingUp, TrendingDown,
-  ArrowUpDown, Plus, X, Filter, DollarSign, PackageX, Boxes, CheckCircle2,
-  ArrowRight, Building2,
+  ArrowUpDown, Plus, X, DollarSign, PackageX, Boxes,
+  ArrowRight, Building2, PencilLine, MoreVertical, Archive,
 } from "lucide-react";
 import { createInventoryMovement } from "@/lib/inventory.actions";
 
@@ -19,11 +21,14 @@ type StockItem = {
   unit: string;
   onHandQty: number;
   minQty: number;
+  maxQty: number;
   lastPriceCents: number;
   supplierName: string | null;
+  notes: string | null;
   totalValueCents: number;
   belowMin: boolean;
   outOfStock: boolean;
+  aboveMax: boolean;
 };
 
 type Summary = {
@@ -57,10 +62,11 @@ export function StockClient({
   businessName,
   destinationBusinesses,
 }: Props) {
+  const router = useRouter();
   const [pending, start] = useTransition();
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("");
-  const [stockFilter, setStockFilter] = useState<"ALL" | "LOW" | "OUT">("ALL");
+  const [stockFilter, setStockFilter] = useState<"ALL" | "LOW" | "OUT" | "OVER">("ALL");
 
   // Modal de movimiento
   const [movingItem, setMovingItem] = useState<StockItem | null>(null);
@@ -77,11 +83,13 @@ export function StockClient({
         const inName = it.name.toLowerCase().includes(q);
         const inSku = (it.sku ?? "").toLowerCase().includes(q);
         const inSupplier = (it.supplierName ?? "").toLowerCase().includes(q);
-        if (!inName && !inSku && !inSupplier) return false;
+        const inCategory = (it.category ?? "").toLowerCase().includes(q);
+        if (!inName && !inSku && !inSupplier && !inCategory) return false;
       }
       if (categoryFilter && it.category !== categoryFilter) return false;
       if (stockFilter === "LOW" && !it.belowMin) return false;
       if (stockFilter === "OUT" && !it.outOfStock) return false;
+      if (stockFilter === "OVER" && !it.aboveMax) return false;
       return true;
     });
   }, [items, search, categoryFilter, stockFilter]);
@@ -122,8 +130,7 @@ export function StockClient({
             moveType === "OUT" && moveDestination ? moveDestination : null,
         });
         closeMoveModal();
-        // Refrescar la página
-        window.location.reload();
+        router.refresh();
       } catch (err: any) {
         setMoveError(err.message);
       }
@@ -179,24 +186,24 @@ export function StockClient({
         </Card>
       </div>
 
-      {/* Filtros */}
+      {/* Filtros + botón nuevo */}
       <Card>
         <CardContent className="pt-4 pb-3">
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-[1fr_auto_auto_auto]">
             <div className="relative">
               <Search className="w-4 h-4 absolute left-3 top-2.5 text-muted-foreground" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Buscar por nombre, SKU o proveedor..."
+                placeholder="Buscar por nombre, SKU, categoría o proveedor..."
                 className="w-full h-9 pl-9 pr-3 border rounded-lg text-sm bg-background"
               />
             </div>
             <select
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
-              className="h-9 px-3 border rounded-lg text-sm bg-background"
+              className="h-9 px-3 border rounded-lg text-sm bg-background min-w-[150px]"
             >
               <option value="">Todas las categorías</option>
               {categories.map((c) => (
@@ -204,21 +211,26 @@ export function StockClient({
               ))}
             </select>
             <div className="flex gap-1">
-              {(["ALL", "LOW", "OUT"] as const).map((f) => {
-                const labels = { ALL: "Todos", LOW: "Bajo mínimo", OUT: "Sin stock" };
+              {(["ALL", "LOW", "OUT", "OVER"] as const).map((f) => {
+                const labels = { ALL: "Todos", LOW: "Bajos", OUT: "Sin stock", OVER: "Sobre máx" };
                 return (
                   <Button
                     key={f}
                     size="sm"
                     variant={stockFilter === f ? "default" : "outline"}
                     onClick={() => setStockFilter(f)}
-                    className="flex-1 h-9 text-xs"
+                    className="h-9 text-xs"
                   >
                     {labels[f]}
                   </Button>
                 );
               })}
             </div>
+            <Button size="sm" asChild className="h-9">
+              <Link href={`/app/inventory/items/new?businessId=${businessId}`}>
+                <Plus className="w-4 h-4 mr-1" /> Nuevo producto
+              </Link>
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -242,6 +254,13 @@ export function StockClient({
               <p className="text-sm text-muted-foreground">
                 {items.length === 0 ? "No hay productos en el catálogo" : "Sin resultados con esos filtros"}
               </p>
+              {items.length === 0 && (
+                <Button size="sm" asChild className="mt-3">
+                  <Link href={`/app/inventory/items/new?businessId=${businessId}`}>
+                    <Plus className="w-4 h-4 mr-1" /> Crear primer producto
+                  </Link>
+                </Button>
+              )}
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -252,7 +271,8 @@ export function StockClient({
                     <th className="text-left px-2 py-2 text-[10px] font-semibold uppercase text-muted-foreground">Categoría</th>
                     <th className="text-right px-2 py-2 text-[10px] font-semibold uppercase text-muted-foreground">Stock</th>
                     <th className="text-right px-2 py-2 text-[10px] font-semibold uppercase text-muted-foreground">Mín</th>
-                    <th className="text-right px-2 py-2 text-[10px] font-semibold uppercase text-muted-foreground">Precio U</th>
+                    <th className="text-right px-2 py-2 text-[10px] font-semibold uppercase text-muted-foreground">Máx</th>
+                    <th className="text-right px-2 py-2 text-[10px] font-semibold uppercase text-muted-foreground">Costo U</th>
                     <th className="text-right px-2 py-2 text-[10px] font-semibold uppercase text-muted-foreground">Valor total</th>
                     <th className="text-right px-4 py-2 text-[10px] font-semibold uppercase text-muted-foreground">Acciones</th>
                   </tr>
@@ -262,15 +282,19 @@ export function StockClient({
                     <tr
                       key={it.id}
                       className={`hover:bg-muted/20 ${
-                        it.outOfStock ? "bg-red-50/30" : it.belowMin ? "bg-amber-50/30" : ""
+                        it.outOfStock ? "bg-red-50/30"
+                        : it.belowMin ? "bg-amber-50/30"
+                        : it.aboveMax ? "bg-blue-50/30"
+                        : ""
                       }`}
                     >
                       <td className="px-4 py-2">
                         <div>
                           <p className="font-medium">{it.name}</p>
-                          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                          <div className="flex items-center gap-2 text-[10px] text-muted-foreground flex-wrap">
                             {it.sku && <span>SKU: {it.sku}</span>}
                             {it.supplierName && <span>· {it.supplierName}</span>}
+                            {it.notes && <span title={it.notes}>· 📝</span>}
                           </div>
                         </div>
                       </td>
@@ -280,17 +304,24 @@ export function StockClient({
                       <td className="px-2 py-2 text-right">
                         <div className="flex items-center justify-end gap-1.5">
                           <span className={`font-semibold ${
-                            it.outOfStock ? "text-red-700" : it.belowMin ? "text-amber-700" : ""
+                            it.outOfStock ? "text-red-700"
+                            : it.belowMin ? "text-amber-700"
+                            : it.aboveMax ? "text-blue-700"
+                            : ""
                           }`}>
                             {it.onHandQty}
                           </span>
                           <span className="text-[10px] text-muted-foreground">{it.unit.toLowerCase()}</span>
                           {it.outOfStock && <PackageX className="w-3.5 h-3.5 text-red-500" />}
                           {!it.outOfStock && it.belowMin && <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />}
+                          {!it.outOfStock && !it.belowMin && it.aboveMax && <ArrowUpDown className="w-3.5 h-3.5 text-blue-500" />}
                         </div>
                       </td>
                       <td className="px-2 py-2 text-right text-xs text-muted-foreground">
                         {it.minQty || "—"}
+                      </td>
+                      <td className="px-2 py-2 text-right text-xs text-muted-foreground">
+                        {it.maxQty > 0 ? it.maxQty : "—"}
                       </td>
                       <td className="px-2 py-2 text-right text-xs">
                         {it.lastPriceCents > 0 ? fmt(it.lastPriceCents) : "—"}
@@ -305,7 +336,7 @@ export function StockClient({
                             variant="outline"
                             className="h-7 px-2 text-[11px]"
                             onClick={() => openMoveModal(it, "IN")}
-                            title="Entrada"
+                            title="Entrada de stock"
                           >
                             <TrendingUp className="w-3 h-3 text-green-600" />
                           </Button>
@@ -315,7 +346,7 @@ export function StockClient({
                             className="h-7 px-2 text-[11px]"
                             onClick={() => openMoveModal(it, "OUT")}
                             disabled={it.onHandQty === 0}
-                            title="Salida"
+                            title="Salida de stock"
                           >
                             <TrendingDown className="w-3 h-3 text-red-600" />
                           </Button>
@@ -324,9 +355,20 @@ export function StockClient({
                             variant="outline"
                             className="h-7 px-2 text-[11px]"
                             onClick={() => openMoveModal(it, "ADJUST")}
-                            title="Ajustar"
+                            title="Ajuste manual"
                           >
                             <ArrowUpDown className="w-3 h-3" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-[11px]"
+                            asChild
+                            title="Editar producto"
+                          >
+                            <Link href={`/app/inventory/items/${it.id}/edit`}>
+                              <PencilLine className="w-3 h-3 text-amber-600" />
+                            </Link>
                           </Button>
                         </div>
                       </td>
@@ -377,6 +419,7 @@ export function StockClient({
                       className={`border rounded-lg p-2 flex flex-col items-center gap-1 text-xs transition ${
                         moveType === t ? "border-primary bg-primary/5" : "hover:bg-muted/30"
                       }`}
+                      type="button"
                     >
                       <Icon className={`w-4 h-4 ${colors[t]}`} />
                       {labels[t]}
@@ -386,7 +429,9 @@ export function StockClient({
               </div>
 
               <div>
-                <label className="text-[10px] text-muted-foreground uppercase">Cantidad ({movingItem.unit.toLowerCase()})</label>
+                <label className="text-[10px] text-muted-foreground uppercase">
+                  Cantidad ({movingItem.unit.toLowerCase()})
+                </label>
                 <input
                   type="number"
                   min="1"
@@ -415,7 +460,7 @@ export function StockClient({
                     ))}
                   </select>
                   <p className="text-[10px] text-muted-foreground mt-1">
-                    Útil cuando entregas producto a un negocio o gerente específico
+                    Útil cuando entregas producto a un negocio o gerente específico.
                   </p>
                 </div>
               )}

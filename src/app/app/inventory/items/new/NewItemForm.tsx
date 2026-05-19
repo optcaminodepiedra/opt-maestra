@@ -1,84 +1,157 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Save, AlertCircle, Building2 } from "lucide-react";
 import { createInventoryItem } from "@/lib/inventory.actions";
-import { Save } from "lucide-react";
 
-export default function NewItemForm({ businessId }: { businessId: string }) {
+type Business = { id: string; name: string };
+
+export default function NewItemForm({
+  businessId,
+  businessName,
+  allBusinesses,
+  isGlobal,
+}: {
+  businessId: string;
+  businessName: string;
+  allBusinesses: Business[];
+  isGlobal: boolean;
+}) {
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  // Estado del form
+  const [selectedBusinessId, setSelectedBusinessId] = useState(businessId);
+  const [name, setName] = useState("");
+  const [sku, setSku] = useState("");
+  const [category, setCategory] = useState("");
+  const [unit, setUnit] = useState("PIECE");
+  const [onHandQty, setOnHandQty] = useState("0");
+  const [minQty, setMinQty] = useState("0");
+  const [maxQty, setMaxQty] = useState("0");
+  const [price, setPrice] = useState("");
+  const [supplierName, setSupplierName] = useState("");
+  const [notes, setNotes] = useState("");
+
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setLoading(true);
+    setError(null);
 
-    const formData = new FormData(e.currentTarget);
-    const name = formData.get("name") as string;
-    const sku = formData.get("sku") as string;
-    const category = formData.get("category") as string;
-    const unit = formData.get("unit") as "PIECE" | "KG" | "LT" | "BOX" | "PACK";
-    const minQty = parseInt(formData.get("minQty") as string) || 0;
-    
-    // Convertimos los pesos (ej. 45.50) a centavos enteros (4550) para la base de datos
-    const priceStr = formData.get("price") as string;
-    const lastPriceCents = priceStr ? Math.round(parseFloat(priceStr) * 100) : 0;
-    
-    const supplierName = formData.get("supplierName") as string;
-
-    try {
-      await createInventoryItem({
-        businessId,
-        name,
-        sku,
-        category,
-        unit,
-        minQty,
-        lastPriceCents,
-        supplierName
-      });
-      alert("¡Producto guardado exitosamente en el catálogo!");
-      router.push("/app/inventory");
-      router.refresh();
-    } catch (error) {
-      alert("Error al guardar el producto. Intenta de nuevo.");
-      setLoading(false);
+    if (!name.trim()) {
+      setError("El nombre del producto es obligatorio.");
+      return;
     }
+
+    const minQtyNum = parseInt(minQty) || 0;
+    const maxQtyNum = parseInt(maxQty) || 0;
+    const onHandNum = parseInt(onHandQty) || 0;
+    const priceCents = price ? Math.round(parseFloat(price) * 100) : 0;
+
+    if (maxQtyNum > 0 && maxQtyNum < minQtyNum) {
+      setError("El stock máximo no puede ser menor al mínimo.");
+      return;
+    }
+
+    start(async () => {
+      try {
+        const result = await createInventoryItem({
+          businessId: selectedBusinessId,
+          name,
+          sku: sku.trim() || undefined,
+          category: category.trim() || undefined,
+          unit: unit as any,
+          onHandQty: onHandNum,
+          minQty: minQtyNum,
+          maxQty: maxQtyNum,
+          lastPriceCents: priceCents,
+          supplierName: supplierName.trim() || undefined,
+          notes: notes.trim() || undefined,
+        });
+        router.push(`/app/inventory/stock?businessId=${selectedBusinessId}`);
+        router.refresh();
+      } catch (err: any) {
+        setError(err.message || "Error al guardar.");
+      }
+    });
   };
 
   return (
     <Card className="shadow-sm border-t-4 border-t-primary">
       <CardContent className="pt-6">
         <form onSubmit={handleSubmit} className="space-y-6">
-          
-          {/* Fila 1: Nombre y Categoría */}
+          {/* Selector de negocio destino (solo para roles globales) */}
+          {isGlobal && allBusinesses.length > 1 && (
+            <div className="space-y-2">
+              <Label htmlFor="businessSelect" className="flex items-center gap-1">
+                <Building2 className="w-4 h-4" />
+                Guardar en negocio <span className="text-red-500">*</span>
+              </Label>
+              <select
+                id="businessSelect"
+                value={selectedBusinessId}
+                onChange={(e) => setSelectedBusinessId(e.target.value)}
+                className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                required
+              >
+                {allBusinesses.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Nombre y Categoría */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="name">Nombre del Producto <span className="text-red-500">*</span></Label>
-              <Input id="name" name="name" placeholder="Ej. Tequila Don Julio 70" required />
+              <Label htmlFor="name">
+                Nombre del producto <span className="text-red-500">*</span>
+              </Label>
+              <Input
+                id="name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ej. Tequila Don Julio 70"
+                required
+                autoFocus
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="category">Categoría</Label>
-              <Input id="category" name="category" placeholder="Ej. Licores, Abarrotes, Limpieza..." />
+              <Input
+                id="category"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                placeholder="Ej. Licores, Abarrotes, Limpieza..."
+              />
             </div>
           </div>
 
-          {/* Fila 2: SKU y Unidad */}
+          {/* SKU y Unidad */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="sku">Código SKU o Barras</Label>
-              <Input id="sku" name="sku" placeholder="Ej. 7501001122334" />
+              <Label htmlFor="sku">Código SKU o de barras</Label>
+              <Input
+                id="sku"
+                value={sku}
+                onChange={(e) => setSku(e.target.value)}
+                placeholder="Ej. 7501001122334"
+              />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="unit">Unidad de Medida <span className="text-red-500">*</span></Label>
-              <select 
-                id="unit" 
-                name="unit" 
-                className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              <Label htmlFor="unit">
+                Unidad de medida <span className="text-red-500">*</span>
+              </Label>
+              <select
+                id="unit"
+                value={unit}
+                onChange={(e) => setUnit(e.target.value)}
+                className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
                 required
               >
                 <option value="PIECE">Pieza (PZA)</option>
@@ -91,30 +164,119 @@ export default function NewItemForm({ businessId }: { businessId: string }) {
           </div>
 
           <div className="border-t pb-2 pt-4">
-            <h3 className="font-semibold text-sm text-muted-foreground mb-4 uppercase tracking-wider">Compras y Alertas</h3>
+            <h3 className="font-semibold text-sm text-muted-foreground mb-4 uppercase tracking-wider">
+              Stock y alertas
+            </h3>
           </div>
 
-          {/* Fila 3: Mínimo, Costo y Proveedor */}
+          {/* Stock inicial, Mínimo, Máximo */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="minQty">Alerta de Stock Mínimo <span className="text-red-500">*</span></Label>
-              <Input id="minQty" name="minQty" type="number" min="0" placeholder="Ej. 5" required />
-              <p className="text-[10px] text-muted-foreground leading-tight">El sistema te avisará cuando haya esta cantidad o menos.</p>
+              <Label htmlFor="onHandQty">Stock inicial</Label>
+              <Input
+                id="onHandQty"
+                type="number"
+                min="0"
+                value={onHandQty}
+                onChange={(e) => setOnHandQty(e.target.value)}
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Cantidad con la que arranca. Se registra un movimiento "IN".
+              </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="price">Costo Estimado ($)</Label>
-              <Input id="price" name="price" type="number" step="0.01" min="0" placeholder="Ej. 850.50" />
+              <Label htmlFor="minQty">
+                Stock mínimo <span className="text-red-500">*</span>
+              </Label>
+              <Input
+                id="minQty"
+                type="number"
+                min="0"
+                value={minQty}
+                onChange={(e) => setMinQty(e.target.value)}
+                required
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Alerta de reabasto.
+              </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="supplierName">Proveedor Habitual</Label>
-              <Input id="supplierName" name="supplierName" placeholder="Ej. Sam's Club, Coca Cola..." />
+              <Label htmlFor="maxQty">Stock máximo</Label>
+              <Input
+                id="maxQty"
+                type="number"
+                min="0"
+                value={maxQty}
+                onChange={(e) => setMaxQty(e.target.value)}
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Tope ideal. 0 = sin tope.
+              </p>
             </div>
           </div>
 
-          <div className="pt-4 flex justify-end">
-            <Button type="submit" disabled={loading} className="w-full sm:w-auto bg-primary hover:bg-primary/90 text-white">
+          <div className="border-t pb-2 pt-4">
+            <h3 className="font-semibold text-sm text-muted-foreground mb-4 uppercase tracking-wider">
+              Compras y referencias
+            </h3>
+          </div>
+
+          {/* Costo y Proveedor */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="price">Costo estimado ($)</Label>
+              <Input
+                id="price"
+                type="number"
+                step="0.01"
+                min="0"
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                placeholder="Ej. 850.50"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="supplierName">Proveedor habitual</Label>
+              <Input
+                id="supplierName"
+                value={supplierName}
+                onChange={(e) => setSupplierName(e.target.value)}
+                placeholder="Ej. Sam's Club, Coca Cola..."
+              />
+            </div>
+          </div>
+
+          {/* Notas */}
+          <div className="space-y-2">
+            <Label htmlFor="notes">Notas / descripción</Label>
+            <textarea
+              id="notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Información adicional, presentación, marca, observaciones..."
+              className="w-full p-3 border rounded-md text-sm bg-background min-h-[80px] focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              {error}
+            </div>
+          )}
+
+          <div className="pt-4 flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => router.push(`/app/inventory/stock?businessId=${selectedBusinessId}`)}
+              disabled={pending}
+            >
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={pending}>
               <Save className="w-4 h-4 mr-2" />
-              {loading ? "Guardando..." : "Guardar en Catálogo"}
+              {pending ? "Guardando..." : "Crear producto"}
             </Button>
           </div>
         </form>

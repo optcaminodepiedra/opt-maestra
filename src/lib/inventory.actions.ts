@@ -42,19 +42,19 @@ export async function getStockSummary(businessId: string) {
   });
 
   const totalItems = items.length;
-  const belowMin = items.filter((i) => i.onHandQty < i.minQty).length;
-  const outOfStock = items.filter((i) => i.onHandQty === 0).length;
+  const belowMin = items.filter((i: any) => i.onHandQty < i.minQty).length;
+  const outOfStock = items.filter((i: any) => i.onHandQty === 0).length;
   const totalValueCents = items.reduce(
-    (sum, i) => sum + i.onHandQty * i.lastPriceCents,
+    (sum: number, i: any) => sum + i.onHandQty * i.lastPriceCents,
     0
   );
 
   const categories = Array.from(
-    new Set(items.map((i) => i.category).filter(Boolean) as string[])
+    new Set(items.map((i: any) => i.category).filter(Boolean) as string[])
   ).sort();
 
   return {
-    items: items.map((i) => ({
+    items: items.map((i: any) => ({
       id: i.id,
       sku: i.sku,
       name: i.name,
@@ -62,11 +62,14 @@ export async function getStockSummary(businessId: string) {
       unit: String(i.unit),
       onHandQty: i.onHandQty,
       minQty: i.minQty,
+      maxQty: i.maxQty ?? 0,
       lastPriceCents: i.lastPriceCents,
       supplierName: i.supplierName,
+      notes: i.notes ?? null,
       totalValueCents: i.onHandQty * i.lastPriceCents,
       belowMin: i.onHandQty < i.minQty,
       outOfStock: i.onHandQty === 0,
+      aboveMax: (i.maxQty ?? 0) > 0 && i.onHandQty > i.maxQty,
     })),
     summary: { totalItems, belowMin, outOfStock, totalValueCents },
     categories,
@@ -173,7 +176,7 @@ export async function listInventoryMovements(opts: {
           select: { id: true, name: true },
         })
       : [];
-  const destBizMap = new Map(destBizs.map((b) => [b.id, b.name]));
+  const destBizMap = new Map(destBizs.map((b: any) => [b.id, b.name]));
 
   return (moves as any[]).map((m) => ({
     id: m.id,
@@ -205,6 +208,7 @@ export async function getDestinationBusinesses(excludeBusinessId: string) {
 
 /**
  * Crea un nuevo producto en el catálogo de inventario de un negocio.
+ * 🆕 Fase 11B: ahora acepta maxQty, notes, onHandQty inicial.
  */
 export async function createInventoryItem(input: {
   businessId: string;
@@ -214,8 +218,10 @@ export async function createInventoryItem(input: {
   unit?: "PIECE" | "KG" | "LT" | "BOX" | "PACK";
   onHandQty?: number;
   minQty?: number;
+  maxQty?: number;
   lastPriceCents?: number;
   supplierName?: string;
+  notes?: string;
 }) {
   await assertCanManageInventory(input.businessId);
 
@@ -230,29 +236,90 @@ export async function createInventoryItem(input: {
     if (exists) throw new Error(`Ya existe un producto con SKU "${input.sku}".`);
   }
 
-  const created = await prisma.inventoryItem.create({
-    data: {
-      businessId: input.businessId,
-      name: input.name.trim(),
-      sku: input.sku?.trim() || null,
-      category: input.category?.trim() || null,
-      unit: input.unit ?? "PIECE",
-      onHandQty: input.onHandQty ?? 0,
-      minQty: input.minQty ?? 0,
-      lastPriceCents: input.lastPriceCents ?? 0,
-      supplierName: input.supplierName?.trim() || null,
-      isActive: true,
-    },
-    select: { id: true, name: true },
+  // Validar maxQty si se proporciona
+  if (input.maxQty != null && input.minQty != null && input.maxQty > 0 && input.maxQty < input.minQty) {
+    throw new Error("El stock máximo no puede ser menor al mínimo.");
+  }
+
+  const me = await getMe();
+  const initialOnHand = Math.max(0, input.onHandQty ?? 0);
+
+  const created = await prisma.$transaction(async (tx: any) => {
+    const item = await tx.inventoryItem.create({
+      data: {
+        businessId: input.businessId,
+        name: input.name.trim(),
+        sku: input.sku?.trim() || null,
+        category: input.category?.trim() || null,
+        unit: input.unit ?? "PIECE",
+        onHandQty: initialOnHand,
+        minQty: input.minQty ?? 0,
+        maxQty: input.maxQty ?? 0,
+        lastPriceCents: input.lastPriceCents ?? 0,
+        supplierName: input.supplierName?.trim() || null,
+        notes: input.notes?.trim() || null,
+        isActive: true,
+      } as any,
+      select: { id: true, name: true },
+    });
+
+    // Si se proporcionó stock inicial > 0, registrar un movimiento IN para trazabilidad
+    if (initialOnHand > 0) {
+      await tx.inventoryMovement.create({
+        data: {
+          businessId: input.businessId,
+          itemId: item.id,
+          type: "IN" as any,
+          qty: initialOnHand,
+          note: "Stock inicial al crear producto",
+          createdById: (me as any).id,
+        },
+      });
+    }
+
+    return item;
   });
 
   revalidatePath("/app/inventory/stock");
   revalidatePath("/app/inventory");
+  revalidatePath("/app/manager/restaurant/inventory");
+  revalidatePath("/app/manager/ranch/inventory");
+  revalidatePath("/app/manager/ops");
   return { ok: true, id: created.id, name: created.name };
 }
 
 /**
+ * Obtiene un producto individual para editarlo.
+ * 🆕 Fase 11B
+ */
+export async function getInventoryItem(id: string) {
+  const item = await prisma.inventoryItem.findUnique({
+    where: { id },
+  });
+  if (!item) throw new Error("Producto no encontrado.");
+
+  await assertCanManageInventory(item.businessId);
+
+  return {
+    id: item.id,
+    businessId: item.businessId,
+    sku: item.sku,
+    name: item.name,
+    category: item.category,
+    unit: String(item.unit),
+    onHandQty: item.onHandQty,
+    minQty: item.minQty,
+    maxQty: (item as any).maxQty ?? 0,
+    lastPriceCents: item.lastPriceCents,
+    supplierName: item.supplierName,
+    notes: (item as any).notes ?? null,
+    isActive: item.isActive,
+  };
+}
+
+/**
  * Actualiza un producto existente.
+ * 🆕 Fase 11B: ahora acepta maxQty, notes.
  */
 export async function updateInventoryItem(input: {
   id: string;
@@ -261,16 +328,36 @@ export async function updateInventoryItem(input: {
   category?: string | null;
   unit?: "PIECE" | "KG" | "LT" | "BOX" | "PACK";
   minQty?: number;
+  maxQty?: number;
   lastPriceCents?: number;
   supplierName?: string | null;
+  notes?: string | null;
   isActive?: boolean;
 }) {
   const item = await prisma.inventoryItem.findUnique({
     where: { id: input.id },
-    select: { businessId: true },
+    select: { businessId: true, sku: true },
   });
   if (!item) throw new Error("Producto no encontrado.");
   await assertCanManageInventory(item.businessId);
+
+  // Validar SKU único si cambió
+  if (input.sku !== undefined && input.sku && input.sku.trim() !== item.sku) {
+    const dup = await prisma.inventoryItem.findFirst({
+      where: {
+        businessId: item.businessId,
+        sku: input.sku.trim(),
+        NOT: { id: input.id },
+      },
+      select: { id: true },
+    });
+    if (dup) throw new Error(`Ya existe otro producto con SKU "${input.sku}".`);
+  }
+
+  // Validar maxQty vs minQty si ambos se proporcionan
+  if (input.maxQty != null && input.minQty != null && input.maxQty > 0 && input.maxQty < input.minQty) {
+    throw new Error("El stock máximo no puede ser menor al mínimo.");
+  }
 
   await prisma.inventoryItem.update({
     where: { id: input.id },
@@ -280,13 +367,97 @@ export async function updateInventoryItem(input: {
       ...(input.category !== undefined && { category: input.category?.trim() || null }),
       ...(input.unit !== undefined && { unit: input.unit }),
       ...(input.minQty !== undefined && { minQty: input.minQty }),
+      ...(input.maxQty !== undefined && { maxQty: input.maxQty }),
       ...(input.lastPriceCents !== undefined && { lastPriceCents: input.lastPriceCents }),
       ...(input.supplierName !== undefined && { supplierName: input.supplierName?.trim() || null }),
+      ...(input.notes !== undefined && { notes: input.notes?.trim() || null }),
       ...(input.isActive !== undefined && { isActive: input.isActive }),
-    },
+    } as any,
   });
 
   revalidatePath("/app/inventory/stock");
   revalidatePath("/app/inventory");
+  revalidatePath("/app/manager/restaurant/inventory");
+  revalidatePath("/app/manager/ranch/inventory");
+  revalidatePath(`/app/inventory/items/${input.id}/edit`);
   return { ok: true };
+}
+
+/**
+ * Soft delete: marca el producto como inactivo.
+ * No se borra de la BD para preservar histórico de movimientos.
+ * 🆕 Fase 11B
+ */
+export async function deactivateInventoryItem(id: string) {
+  const item = await prisma.inventoryItem.findUnique({
+    where: { id },
+    select: { businessId: true, name: true, onHandQty: true },
+  });
+  if (!item) throw new Error("Producto no encontrado.");
+  await assertCanManageInventory(item.businessId);
+
+  await prisma.inventoryItem.update({
+    where: { id },
+    data: { isActive: false },
+  });
+
+  revalidatePath("/app/inventory/stock");
+  revalidatePath("/app/inventory");
+  revalidatePath("/app/manager/restaurant/inventory");
+  revalidatePath("/app/manager/ranch/inventory");
+  return { ok: true, name: item.name, hadStock: item.onHandQty > 0 };
+}
+
+/**
+ * Reactivar un producto previamente desactivado.
+ * 🆕 Fase 11B
+ */
+export async function reactivateInventoryItem(id: string) {
+  const item = await prisma.inventoryItem.findUnique({
+    where: { id },
+    select: { businessId: true, name: true },
+  });
+  if (!item) throw new Error("Producto no encontrado.");
+  await assertCanManageInventory(item.businessId);
+
+  await prisma.inventoryItem.update({
+    where: { id },
+    data: { isActive: true },
+  });
+
+  revalidatePath("/app/inventory/stock");
+  revalidatePath("/app/inventory");
+  revalidatePath("/app/manager/restaurant/inventory");
+  revalidatePath("/app/manager/ranch/inventory");
+  return { ok: true, name: item.name };
+}
+
+/**
+ * Lista productos inactivos para poder reactivarlos.
+ * 🆕 Fase 11B
+ */
+export async function listInactiveItems(businessId: string) {
+  await assertCanManageInventory(businessId);
+
+  const items = await prisma.inventoryItem.findMany({
+    where: { businessId, isActive: false },
+    orderBy: { updatedAt: "desc" },
+    select: {
+      id: true,
+      name: true,
+      sku: true,
+      category: true,
+      onHandQty: true,
+      updatedAt: true,
+    },
+  });
+
+  return items.map((i: any) => ({
+    id: i.id,
+    name: i.name,
+    sku: i.sku,
+    category: i.category,
+    onHandQty: i.onHandQty,
+    deactivatedAt: i.updatedAt.toISOString(),
+  }));
 }
