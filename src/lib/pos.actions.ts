@@ -5,6 +5,12 @@ import { getMe } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { userCanAccessBusiness } from "@/lib/restaurant-resolve";
 
+// Roles que pueden cancelar items YA enviados a cocina (Fase 11D)
+const MANAGER_AND_UP = [
+  "MASTER_ADMIN", "OWNER", "SUPERIOR",
+  "MANAGER_OPS", "MANAGER_RESTAURANT", "MANAGER_RANCH", "MANAGER", "MANAGER_HOTEL",
+];
+
 /**
  * Carga una orden completa con items y menú del negocio.
  * Verifica permisos del usuario.
@@ -45,7 +51,7 @@ export async function getOrderForPOS(orderId: string) {
     categories[item.category].push(item);
   }
 
-  const total = order.items.reduce((s, i) => s + i.qty * i.priceCents, 0);
+  const total = order.items.reduce((s: number, i: any) => s + i.qty * i.priceCents, 0);
 
   return {
     order: {
@@ -60,18 +66,21 @@ export async function getOrderForPOS(orderId: string) {
       note: order.note,
       openedAt: order.openedAt.toISOString(),
       totalCents: total,
-      items: order.items.map((i) => ({
-        id: i.id,
-        menuItemId: i.menuItemId,
-        name: i.menuItem.name,
-        category: i.menuItem.category,
-        station: (i.menuItem as any).station ?? "KITCHEN",
-        qty: i.qty,
-        priceCents: i.priceCents,
-        note: i.note,
-        kitchenStatus: i.kitchenStatus,
-        subtotalCents: i.qty * i.priceCents,
-      })),
+      // 👇 FIX Fase 11D: filtrado defensivo - solo items con menuItem válido
+      items: order.items
+        .filter((i: any) => i.menuItem != null)
+        .map((i: any) => ({
+          id: i.id,
+          menuItemId: i.menuItemId,
+          name: i.menuItem.name,
+          category: i.menuItem.category ?? "sin categoría",
+          station: i.menuItem.station ?? "KITCHEN",
+          qty: i.qty,
+          priceCents: i.priceCents,
+          note: i.note,
+          kitchenStatus: i.kitchenStatus,
+          subtotalCents: i.qty * i.priceCents,
+        })),
     },
     menu: {
       categories,
@@ -133,7 +142,6 @@ export async function addItemToOrder(input: {
         where: { id: existing.id },
         data: { qty: existing.qty + qty },
       });
-      // Retornar el item actualizado para optimistic UI
       return {
         ok: true,
         consolidated: true,
@@ -184,68 +192,245 @@ export async function addItemToOrder(input: {
 
 /**
  * Cambia la cantidad de un item. Si qty=0, lo elimina.
+ *
+ * 🔧 FIX Fase 11D: ahora es resiliente a races / items ya borrados.
+ * No tira error si el item ya no existe (Judith puede dar doble-click sin que crashee).
  */
 export async function updateItemQuantity(input: { itemId: string; qty: number }) {
-  const me = await getMe();
-  const role = (me as any).role as string;
+  try {
+    const me = await getMe();
+    const role = (me as any).role as string;
 
-  const item = await prisma.restaurantOrderItem.findUnique({
-    where: { id: input.itemId },
-    include: { order: { select: { id: true, businessId: true, status: true } } },
-  });
-  if (!item) throw new Error("Item no encontrado");
-  if (!["OPEN", "SENT"].includes(item.order.status)) {
-    throw new Error("Orden cerrada");
+    const item = await prisma.restaurantOrderItem.findUnique({
+      where: { id: input.itemId },
+      include: { order: { select: { id: true, businessId: true, status: true } } },
+    });
+
+    // 🔧 FIX: si el item ya fue borrado (race condition), no error - sólo confirma
+    if (!item) {
+      return { ok: true, deleted: true, alreadyGone: true };
+    }
+
+    if (!["OPEN", "SENT"].includes(item.order.status)) {
+      throw new Error("La orden ya está cerrada y no se puede modificar");
+    }
+    if (item.kitchenStatus !== "NEW") {
+      throw new Error("Este platillo ya está en cocina. Use el botón de cancelar.");
+    }
+
+    const ok = await userCanAccessBusiness((me as any).id, role, item.order.businessId);
+    if (!ok) throw new Error("No tienes acceso a este restaurante");
+
+    if (input.qty <= 0) {
+      // 🔧 FIX: usar deleteMany para que no falle si el item ya no existe
+      const result = await prisma.restaurantOrderItem.deleteMany({
+        where: { id: input.itemId },
+      });
+      return { ok: true, deleted: true, alreadyGone: result.count === 0 };
+    }
+
+    const updated = await prisma.restaurantOrderItem.update({
+      where: { id: input.itemId },
+      data: { qty: input.qty },
+    });
+    return { ok: true, deleted: false, item: { id: updated.id, qty: updated.qty } };
+  } catch (err: any) {
+    // 🔧 FIX Fase 11D: capturar errores Prisma para evitar Server Component crashes
+    // P2025: record not found - races, ya borrado
+    if (err.code === "P2025") {
+      return { ok: true, deleted: true, alreadyGone: true };
+    }
+    // Cualquier otro error de Prisma - logear y rethrow con mensaje claro
+    console.error("[pos.actions/updateItemQuantity] Error:", err);
+    throw new Error(err.message || "No se pudo actualizar el item");
   }
-  if (item.kitchenStatus !== "NEW") {
-    throw new Error("No se puede modificar un item ya enviado a cocina");
-  }
-
-  const ok = await userCanAccessBusiness((me as any).id, role, item.order.businessId);
-  if (!ok) throw new Error("No tienes acceso a este restaurante");
-
-  if (input.qty <= 0) {
-    await prisma.restaurantOrderItem.delete({ where: { id: input.itemId } });
-    return { ok: true, deleted: true };
-  }
-
-  const updated = await prisma.restaurantOrderItem.update({
-    where: { id: input.itemId },
-    data: { qty: input.qty },
-  });
-  return { ok: true, deleted: false, item: { id: updated.id, qty: updated.qty } };
 }
 
 /**
  * Actualiza la nota de un item.
+ *
+ * 🔧 FIX Fase 11D: ahora es resiliente.
  */
 export async function updateItemNote(input: { itemId: string; note: string }) {
+  try {
+    const me = await getMe();
+    const role = (me as any).role as string;
+
+    const item = await prisma.restaurantOrderItem.findUnique({
+      where: { id: input.itemId },
+      include: { order: { select: { id: true, businessId: true, status: true } } },
+    });
+    if (!item) return { ok: true, alreadyGone: true };
+    if (item.kitchenStatus !== "NEW") {
+      throw new Error("No se puede modificar un item ya enviado a cocina");
+    }
+    const ok = await userCanAccessBusiness((me as any).id, role, item.order.businessId);
+    if (!ok) throw new Error("No tienes acceso a este restaurante");
+
+    await prisma.restaurantOrderItem.update({
+      where: { id: input.itemId },
+      data: { note: input.note.trim() || null },
+    });
+    return { ok: true };
+  } catch (err: any) {
+    if (err.code === "P2025") {
+      return { ok: true, alreadyGone: true };
+    }
+    console.error("[pos.actions/updateItemNote] Error:", err);
+    throw new Error(err.message || "No se pudo actualizar la nota");
+  }
+}
+
+/**
+ * 🆕 Fase 11D: Cancela un item que YA fue enviado a cocina.
+ *
+ * Reglas:
+ * - Sólo MANAGER y arriba
+ * - Motivo obligatorio (mínimo 3 caracteres)
+ * - No se puede cancelar items DELIVERED (ya entregados al cliente)
+ * - Guarda log en OrderItemCancellation antes de borrar (auditoría)
+ * - Elimina físicamente el item de la orden
+ */
+export async function cancelOrderItem(input: {
+  itemId: string;
+  reason: string;
+}) {
+  try {
+    const me = await getMe();
+    const role = (me as any).role as string;
+
+    // Verificar rol
+    if (!MANAGER_AND_UP.includes(role)) {
+      throw new Error("Solo MANAGER y superiores pueden cancelar platillos enviados a cocina.");
+    }
+
+    const reason = (input.reason ?? "").trim();
+    if (reason.length < 3) {
+      throw new Error("El motivo de cancelación es obligatorio (mínimo 3 caracteres).");
+    }
+
+    const item = await prisma.restaurantOrderItem.findUnique({
+      where: { id: input.itemId },
+      include: {
+        order: { select: { id: true, businessId: true, status: true } },
+        menuItem: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!item) {
+      // Race condition: ya fue cancelado/borrado por otra request
+      return { ok: true, alreadyGone: true };
+    }
+
+    if (!["OPEN", "SENT"].includes(item.order.status)) {
+      throw new Error("La orden ya está cerrada y no se pueden cancelar platillos.");
+    }
+
+    // Sólo items en cocina (no NEW ni DELIVERED)
+    if (item.kitchenStatus === "NEW") {
+      throw new Error("Este platillo aún no se envía a cocina. Usa el botón de eliminar.");
+    }
+    if (item.kitchenStatus === "DELIVERED") {
+      throw new Error("Este platillo ya fue entregado al cliente y no se puede cancelar.");
+    }
+    if (item.kitchenStatus === "CANCELED") {
+      return { ok: true, alreadyGone: true };
+    }
+
+    const ok = await userCanAccessBusiness((me as any).id, role, item.order.businessId);
+    if (!ok) throw new Error("No tienes acceso a este restaurante.");
+
+    // Transacción: log + borrado
+    await prisma.$transaction(async (tx: any) => {
+      // 1) Guardar log de auditoría (no se pierde aunque borremos el item)
+      await tx.orderItemCancellation.create({
+        data: {
+          orderId: item.order.id,
+          businessId: item.order.businessId,
+          menuItemId: item.menuItem?.id ?? null,
+          menuItemName: item.menuItem?.name ?? "Producto eliminado",
+          qty: item.qty,
+          priceCents: item.priceCents,
+          kitchenStatus: item.kitchenStatus,
+          reason,
+          canceledById: (me as any).id,
+          canceledByName: (me as any).fullName ?? (me as any).email ?? "Desconocido",
+        },
+      });
+
+      // 2) Eliminar el item físicamente (tal como pediste)
+      await tx.restaurantOrderItem.delete({
+        where: { id: input.itemId },
+      });
+    });
+
+    // Notificar al KDS y POS
+    revalidatePath(`/app/restaurant/pos/${item.order.id}`);
+    revalidatePath(`/app/kitchen`);
+    revalidatePath(`/app/restaurant/tables`);
+
+    return {
+      ok: true,
+      canceledItem: {
+        name: item.menuItem?.name ?? "Producto",
+        qty: item.qty,
+        priceCents: item.priceCents,
+        kitchenStatus: item.kitchenStatus,
+      },
+    };
+  } catch (err: any) {
+    if (err.code === "P2025") {
+      return { ok: true, alreadyGone: true };
+    }
+    console.error("[pos.actions/cancelOrderItem] Error:", err);
+    throw new Error(err.message || "No se pudo cancelar el platillo");
+  }
+}
+
+/**
+ * 🆕 Fase 11D: Lista cancelaciones recientes de un negocio (para reportes).
+ */
+export async function listRecentCancellations(opts: {
+  businessId: string;
+  limit?: number;
+  fromDate?: string;
+  toDate?: string;
+}) {
   const me = await getMe();
   const role = (me as any).role as string;
-
-  const item = await prisma.restaurantOrderItem.findUnique({
-    where: { id: input.itemId },
-    include: { order: { select: { id: true, businessId: true, status: true } } },
-  });
-  if (!item) throw new Error("Item no encontrado");
-  if (item.kitchenStatus !== "NEW") {
-    throw new Error("No se puede modificar un item ya enviado a cocina");
-  }
-  const ok = await userCanAccessBusiness((me as any).id, role, item.order.businessId);
+  const ok = await userCanAccessBusiness((me as any).id, role, opts.businessId);
   if (!ok) throw new Error("No tienes acceso a este restaurante");
 
-  await prisma.restaurantOrderItem.update({
-    where: { id: input.itemId },
-    data: { note: input.note.trim() || null },
+  const where: any = { businessId: opts.businessId };
+  if (opts.fromDate || opts.toDate) {
+    where.createdAt = {};
+    if (opts.fromDate) where.createdAt.gte = new Date(opts.fromDate);
+    if (opts.toDate) where.createdAt.lte = new Date(opts.toDate);
+  }
+
+  const cancellations = await prisma.orderItemCancellation.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    take: opts.limit ?? 100,
   });
-  return { ok: true };
+
+  return cancellations.map((c: any) => ({
+    id: c.id,
+    orderId: c.orderId,
+    menuItemName: c.menuItemName,
+    qty: c.qty,
+    priceCents: c.priceCents,
+    totalCents: c.qty * c.priceCents,
+    kitchenStatus: c.kitchenStatus,
+    reason: c.reason,
+    canceledByName: c.canceledByName,
+    createdAt: c.createdAt.toISOString(),
+  }));
 }
 
 /**
  * Envía los items NEW a cocina (marca como PREPARING).
  * Cambia el estado de la orden a SENT.
- *
- * FIX: ya no escribe sentToKitchenAt (campo no existe en schema).
  */
 export async function sendOrderToKitchen(orderId: string) {
   const me = await getMe();
@@ -262,15 +447,14 @@ export async function sendOrderToKitchen(orderId: string) {
   const ok = await userCanAccessBusiness((me as any).id, role, order.businessId);
   if (!ok) throw new Error("No tienes acceso a este restaurante");
 
-  const newItems = order.items.filter((i) => i.kitchenStatus === "NEW");
+  const newItems = order.items.filter((i: any) => i.kitchenStatus === "NEW");
   if (newItems.length === 0) {
     throw new Error("No hay items nuevos para enviar a cocina");
   }
 
-  // Solo updates, sin sentToKitchenAt
   await prisma.$transaction([
     prisma.restaurantOrderItem.updateMany({
-      where: { id: { in: newItems.map((i) => i.id) } },
+      where: { id: { in: newItems.map((i: any) => i.id) } },
       data: { kitchenStatus: "PREPARING" },
     }),
     prisma.restaurantOrder.update({
@@ -316,7 +500,7 @@ export async function checkoutOrder(input: {
   const ok = await userCanAccessBusiness((me as any).id, role, order.businessId);
   if (!ok) throw new Error("No tienes acceso a este restaurante");
 
-  const subtotal = order.items.reduce((s, i) => s + i.qty * i.priceCents, 0);
+  const subtotal = order.items.reduce((s: number, i: any) => s + i.qty * i.priceCents, 0);
   const tipCents = Math.max(0, input.tipCents ?? 0);
   const totalCents = subtotal + tipCents;
 
@@ -327,15 +511,13 @@ export async function checkoutOrder(input: {
 
   const concept = `Mesa ${order.table?.name ?? "?"} · Orden #${order.id.slice(-6).toUpperCase()}`;
 
-  // Marcar items NEW como DELIVERED (bypass cocina cuando se cobra directo)
-  const newItems = order.items.filter((i) => i.kitchenStatus === "NEW");
+  const newItems = order.items.filter((i: any) => i.kitchenStatus === "NEW");
 
   await prisma.$transaction([
-    // Si hay items NEW (cobrar sin pasar por cocina), marcarlos DELIVERED
     ...(newItems.length > 0
       ? [
           prisma.restaurantOrderItem.updateMany({
-            where: { id: { in: newItems.map((i) => i.id) } },
+            where: { id: { in: newItems.map((i: any) => i.id) } },
             data: { kitchenStatus: "DELIVERED" },
           }),
         ]

@@ -237,6 +237,8 @@ model User {
   importBatch           ImportBatch?  @relation("UserImportBatch", fields: [importBatchId], references: [id])
   importBatchesCreated  ImportBatch[] @relation("ImportBatchCreatedBy")
   importBatchesReverted ImportBatch[] @relation("ImportBatchRevertedBy")
+
+  cancellations OrderItemCancellation[] @relation("UserCancellations")
 }
 
 model UserBusinessAccess {
@@ -1564,4 +1566,26 @@ model SalePayment {
 
   @@index([saleId])
   @@index([businessId])
+}
+
+/// Log de auditoría: items cancelados después de enviarse a cocina.
+/// Se preserva aunque el item original se borre.
+model OrderItemCancellation {
+  id             String   @id @default(cuid())
+  orderId        String
+  businessId     String
+  menuItemId     String?
+  menuItemName   String
+  qty            Int
+  priceCents     Int
+  kitchenStatus  String   // PREPARING | READY | DELIVERED
+  reason         String   // motivo obligatorio
+  canceledById   String
+  canceledByName String
+  createdAt      DateTime @default(now())
+
+  canceledBy     User     @relation("UserCancellations", fields: [canceledById], references: [id])
+
+  @@index([businessId, createdAt(sort: Desc)])
+  @@index([orderId])
 }

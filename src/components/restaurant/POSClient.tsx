@@ -8,11 +8,12 @@ import { Badge } from "@/components/ui/badge";
 import {
   Search, Plus, Minus, Trash2, X, ShoppingCart, AlertCircle,
   ArrowLeft, StickyNote, Send, CreditCard, UtensilsCrossed, CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import Link from "next/link";
 import {
   addItemToOrder, updateItemQuantity, updateItemNote,
-  sendOrderToKitchen, checkoutOrder,
+  sendOrderToKitchen, checkoutOrder, cancelOrderItem,
 } from "@/lib/pos.actions";
 
 type MenuItem = {
@@ -57,6 +58,7 @@ type Props = {
   categories: Record<string, MenuItem[]>;
   categoryNames: string[];
   cashpoints: Array<{ id: string; name: string }>;
+  currentUserRole?: string;
 };
 
 const fmt = (cents: number) =>
@@ -153,10 +155,19 @@ function optimisticReducer(state: OrderItem[], action: OptimisticAction): OrderI
 
 /* ═══════════════════════════════════════════════════════════════ */
 
-export function POSClient({ order: initialOrder, categories, categoryNames, cashpoints }: Props) {
+// Roles que pueden cancelar items YA enviados a cocina (Fase 11D)
+const CAN_CANCEL_KITCHEN_ROLES = [
+  "MASTER_ADMIN", "OWNER", "SUPERIOR",
+  "MANAGER_OPS", "MANAGER_RESTAURANT", "MANAGER_RANCH", "MANAGER", "MANAGER_HOTEL",
+];
+
+export function POSClient({ order: initialOrder, categories, categoryNames, cashpoints, currentUserRole }: Props) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+
+  // 🆕 Fase 11D: detectar si puede cancelar items en cocina
+  const canCancelKitchen = !!currentUserRole && CAN_CANCEL_KITCHEN_ROLES.includes(currentUserRole);
 
   // Estado optimistic de items
   const [items, dispatchItems] = useOptimistic(
@@ -187,6 +198,11 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
   const [paymentMethod, setPaymentMethod] = useState<"CASH" | "CARD" | "TRANSFER">("CASH");
   const [cashpointId, setCashpointId] = useState(cashpoints[0]?.id ?? "");
   const [tipAmount, setTipAmount] = useState(0);
+
+  // 🆕 Fase 11D: Modal de cancelación de items en cocina
+  const [cancelingItem, setCancelingItem] = useState<OrderItem | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelSubmitting, setCancelSubmitting] = useState(false);
 
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
 
@@ -304,12 +320,67 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
     if (item.kitchenStatus !== "NEW") return;
     if (!confirm(`¿Quitar ${item.name} de la orden?`)) return;
 
+    // 🔧 FIX Fase 11D: optimistic remove + manejo robusto
     startTransition(() => dispatchItems({ type: "REMOVE", itemId: item.id }));
 
     updateItemQuantity({ itemId: item.id, qty: 0 })
-      .then(() => router.refresh())
+      .then((result: any) => {
+        // alreadyGone = race condition manejada (no es error)
+        if (result?.alreadyGone) {
+          // ya estaba borrado, todo bien
+        }
+        router.refresh();
+      })
       .catch((err: any) => {
-        setError(err.message);
+        // 🔧 FIX: si llegamos aquí, es un error real - mostrar pero NO refrescar
+        // (el refresh puede causar Server Component crash si hay estado inconsistente)
+        setError(err?.message || "No se pudo eliminar el platillo. Intenta de nuevo.");
+        // Restaurar el item en UI ya que el server falló
+        router.refresh();
+      });
+  }
+
+  // 🆕 Fase 11D: Abrir modal de cancelación para items en cocina
+  function handleOpenCancelModal(item: OrderItem) {
+    if (item.kitchenStatus === "NEW" || item.kitchenStatus === "DELIVERED") return;
+    if (!canCancelKitchen) {
+      setError("Solo los managers pueden cancelar platillos en cocina.");
+      return;
+    }
+    setCancelingItem(item);
+    setCancelReason("");
+    setError(null);
+  }
+
+  function handleCloseCancelModal() {
+    setCancelingItem(null);
+    setCancelReason("");
+    setCancelSubmitting(false);
+  }
+
+  function handleConfirmCancel() {
+    if (!cancelingItem) return;
+    const reason = cancelReason.trim();
+    if (reason.length < 3) {
+      setError("Escribe un motivo de al menos 3 caracteres.");
+      return;
+    }
+
+    const itemId = cancelingItem.id;
+    setCancelSubmitting(true);
+    setError(null);
+
+    // Optimistic: quitar de UI
+    startTransition(() => dispatchItems({ type: "REMOVE", itemId }));
+
+    cancelOrderItem({ itemId, reason })
+      .then(() => {
+        handleCloseCancelModal();
+        router.refresh();
+      })
+      .catch((err: any) => {
+        setError(err?.message || "No se pudo cancelar el platillo.");
+        setCancelSubmitting(false);
         router.refresh();
       });
   }
@@ -620,9 +691,23 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
                           </div>
                         </>
                       ) : (
-                        <p className="text-xs text-muted-foreground">
-                          {item.qty}× a {fmt(item.priceCents)}
-                        </p>
+                        <div className="flex items-center justify-between w-full gap-2">
+                          <p className="text-xs text-muted-foreground">
+                            {item.qty}× a {fmt(item.priceCents)}
+                          </p>
+                          {/* 🆕 Fase 11D: Botón cancelar items en cocina (solo managers, no DELIVERED) */}
+                          {canCancelKitchen && item.kitchenStatus !== "DELIVERED" && item.kitchenStatus !== "CANCELED" && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-[10px] text-red-600 hover:bg-red-50"
+                              onClick={() => handleOpenCancelModal(item)}
+                              title="Cancelar este platillo (requiere motivo)"
+                            >
+                              <XCircle className="w-3 h-3 mr-1" /> Cancelar
+                            </Button>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>
@@ -759,6 +844,77 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
               <div className="flex gap-2 justify-end">
                 <Button variant="outline" onClick={() => setEditingItem(null)}>Cancelar</Button>
                 <Button onClick={handleSaveNote}>Guardar</Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* 🆕 Fase 11D: Modal de cancelación de items en cocina (motivo obligatorio) */}
+      {cancelingItem && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <Card className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl border-2 border-red-200">
+            <CardHeader className="pb-3">
+              <div className="flex items-start justify-between">
+                <CardTitle className="text-base flex items-center gap-2 text-red-700">
+                  <XCircle className="w-5 h-5" />
+                  Cancelar platillo
+                </CardTitle>
+                <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={handleCloseCancelModal} disabled={cancelSubmitting}>
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm">
+                <p className="font-medium">{cancelingItem.qty}× {cancelingItem.name}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Estado: {
+                    cancelingItem.kitchenStatus === "PREPARING" ? "🔥 En cocina (preparándose)" :
+                    cancelingItem.kitchenStatus === "READY" ? "✓ Listo en cocina" :
+                    cancelingItem.kitchenStatus
+                  }
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Subtotal: <strong>{fmt(cancelingItem.subtotalCents)}</strong>
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-foreground">
+                  Motivo de cancelación <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                  placeholder="Ej: Cliente cambió de opinión, error de mesero, ingrediente agotado..."
+                  className="w-full p-2 border rounded-lg text-sm bg-background min-h-[80px] focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                  autoFocus
+                  disabled={cancelSubmitting}
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  El motivo queda en el registro de auditoría con tu nombre.
+                </p>
+              </div>
+
+              {error && (
+                <div className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  {error}
+                </div>
+              )}
+
+              <div className="flex gap-2 justify-end pt-2">
+                <Button variant="outline" onClick={handleCloseCancelModal} disabled={cancelSubmitting}>
+                  No cancelar
+                </Button>
+                <Button
+                  onClick={handleConfirmCancel}
+                  disabled={cancelSubmitting || cancelReason.trim().length < 3}
+                  className="bg-red-600 hover:bg-red-700"
+                >
+                  {cancelSubmitting ? "Cancelando..." : "Sí, cancelar platillo"}
+                </Button>
               </div>
             </CardContent>
           </Card>

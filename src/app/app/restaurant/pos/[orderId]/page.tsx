@@ -74,6 +74,7 @@ export default async function POSPage({
       categories={menu.categories as any}
       categoryNames={menu.categoryNames}
       cashpoints={cashpoints}
+      currentUserRole={role}
     />
   );
 }
