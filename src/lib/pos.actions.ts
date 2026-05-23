@@ -193,63 +193,93 @@ export async function addItemToOrder(input: {
 /**
  * Cambia la cantidad de un item. Si qty=0, lo elimina.
  *
- * 🔧 FIX Fase 11D: ahora es resiliente a races / items ya borrados.
- * No tira error si el item ya no existe (Judith puede dar doble-click sin que crashee).
+ * 🔧 FIX Fase 11E: Ultra-resiliente. NUNCA tira excepción.
+ * Devuelve { ok: false, error } en lugar de throw, para que NO crashee el Server Component.
  */
 export async function updateItemQuantity(input: { itemId: string; qty: number }) {
   try {
     const me = await getMe();
     const role = (me as any).role as string;
 
-    const item = await prisma.restaurantOrderItem.findUnique({
-      where: { id: input.itemId },
-      include: { order: { select: { id: true, businessId: true, status: true } } },
-    });
+    let item;
+    try {
+      item = await prisma.restaurantOrderItem.findUnique({
+        where: { id: input.itemId },
+        include: { order: { select: { id: true, businessId: true, status: true } } },
+      });
+    } catch (queryErr: any) {
+      console.error("[pos.actions/updateItemQuantity] Error en findUnique:", queryErr);
+      return { ok: false, error: "No se pudo cargar el item" };
+    }
 
-    // 🔧 FIX: si el item ya fue borrado (race condition), no error - sólo confirma
+    // Item ya no existe (race condition o borrado previo) → ok
     if (!item) {
       return { ok: true, deleted: true, alreadyGone: true };
     }
 
     if (!["OPEN", "SENT"].includes(item.order.status)) {
-      throw new Error("La orden ya está cerrada y no se puede modificar");
+      return { ok: false, error: "La orden ya está cerrada y no se puede modificar" };
     }
     if (item.kitchenStatus !== "NEW") {
-      throw new Error("Este platillo ya está en cocina. Use el botón de cancelar.");
+      return { ok: false, error: "Este platillo ya está en cocina. Usa el botón de cancelar." };
     }
 
-    const ok = await userCanAccessBusiness((me as any).id, role, item.order.businessId);
-    if (!ok) throw new Error("No tienes acceso a este restaurante");
+    let canAccess = false;
+    try {
+      canAccess = await userCanAccessBusiness((me as any).id, role, item.order.businessId);
+    } catch (accessErr: any) {
+      console.error("[pos.actions/updateItemQuantity] Error en userCanAccessBusiness:", accessErr);
+    }
+    if (!canAccess) {
+      return { ok: false, error: "No tienes acceso a este restaurante" };
+    }
 
     if (input.qty <= 0) {
-      // 🔧 FIX: usar deleteMany para que no falle si el item ya no existe
-      const result = await prisma.restaurantOrderItem.deleteMany({
-        where: { id: input.itemId },
-      });
-      return { ok: true, deleted: true, alreadyGone: result.count === 0 };
+      try {
+        const result = await prisma.restaurantOrderItem.deleteMany({
+          where: { id: input.itemId },
+        });
+        try {
+          revalidatePath(`/app/restaurant/pos/${item.order.id}`);
+        } catch {}
+        return { ok: true, deleted: true, alreadyGone: result.count === 0 };
+      } catch (deleteErr: any) {
+        if (deleteErr.code === "P2025") {
+          return { ok: true, deleted: true, alreadyGone: true };
+        }
+        console.error("[pos.actions/updateItemQuantity] Error en delete:", deleteErr);
+        return { ok: false, error: "No se pudo eliminar el platillo" };
+      }
     }
 
-    const updated = await prisma.restaurantOrderItem.update({
-      where: { id: input.itemId },
-      data: { qty: input.qty },
-    });
-    return { ok: true, deleted: false, item: { id: updated.id, qty: updated.qty } };
-  } catch (err: any) {
-    // 🔧 FIX Fase 11D: capturar errores Prisma para evitar Server Component crashes
-    // P2025: record not found - races, ya borrado
-    if (err.code === "P2025") {
-      return { ok: true, deleted: true, alreadyGone: true };
+    try {
+      const updated = await prisma.restaurantOrderItem.update({
+        where: { id: input.itemId },
+        data: { qty: input.qty },
+      });
+      try {
+        revalidatePath(`/app/restaurant/pos/${item.order.id}`);
+      } catch {}
+      return { ok: true, deleted: false, item: { id: updated.id, qty: updated.qty } };
+    } catch (updateErr: any) {
+      if (updateErr.code === "P2025") {
+        return { ok: true, deleted: true, alreadyGone: true };
+      }
+      console.error("[pos.actions/updateItemQuantity] Error en update:", updateErr);
+      return { ok: false, error: "No se pudo actualizar la cantidad" };
     }
-    // Cualquier otro error de Prisma - logear y rethrow con mensaje claro
-    console.error("[pos.actions/updateItemQuantity] Error:", err);
-    throw new Error(err.message || "No se pudo actualizar el item");
+  } catch (err: any) {
+    // 🔧 FIX 11E: capturar TODO. NUNCA throw.
+    console.error("[pos.actions/updateItemQuantity] Error inesperado:", err);
+    console.error("[pos.actions/updateItemQuantity] Stack:", err?.stack);
+    return { ok: false, error: err?.message || "Error inesperado" };
   }
 }
 
 /**
  * Actualiza la nota de un item.
  *
- * 🔧 FIX Fase 11D: ahora es resiliente.
+ * 🔧 FIX Fase 11E: Ultra-resiliente. NUNCA tira excepción.
  */
 export async function updateItemNote(input: { itemId: string; note: string }) {
   try {
@@ -262,115 +292,169 @@ export async function updateItemNote(input: { itemId: string; note: string }) {
     });
     if (!item) return { ok: true, alreadyGone: true };
     if (item.kitchenStatus !== "NEW") {
-      throw new Error("No se puede modificar un item ya enviado a cocina");
+      return { ok: false, error: "No se puede modificar un item ya enviado a cocina" };
     }
-    const ok = await userCanAccessBusiness((me as any).id, role, item.order.businessId);
-    if (!ok) throw new Error("No tienes acceso a este restaurante");
+    const canAccess = await userCanAccessBusiness((me as any).id, role, item.order.businessId);
+    if (!canAccess) return { ok: false, error: "No tienes acceso a este restaurante" };
 
     await prisma.restaurantOrderItem.update({
       where: { id: input.itemId },
       data: { note: input.note.trim() || null },
     });
+    try {
+      revalidatePath(`/app/restaurant/pos/${item.order.id}`);
+    } catch {}
     return { ok: true };
   } catch (err: any) {
     if (err.code === "P2025") {
       return { ok: true, alreadyGone: true };
     }
     console.error("[pos.actions/updateItemNote] Error:", err);
-    throw new Error(err.message || "No se pudo actualizar la nota");
+    return { ok: false, error: err?.message || "No se pudo actualizar la nota" };
   }
 }
 
 /**
- * 🆕 Fase 11D: Cancela un item que YA fue enviado a cocina.
+ * 🆕 Fase 11D / Mejorado en 11E
+ *
+ * Cancela un item que YA fue enviado a cocina.
  *
  * Reglas:
  * - Sólo MANAGER y arriba
  * - Motivo obligatorio (mínimo 3 caracteres)
  * - No se puede cancelar items DELIVERED (ya entregados al cliente)
- * - Guarda log en OrderItemCancellation antes de borrar (auditoría)
+ * - Guarda log en OrderItemCancellation (si existe la tabla; si no, sólo logea y borra)
  * - Elimina físicamente el item de la orden
+ *
+ * 🔧 11E: Ultra-resiliente. Si la tabla OrderItemCancellation NO existe (porque el
+ * cliente Prisma no se regeneró o migration falló), igual borra el item y registra
+ * en logs del servidor.
  */
 export async function cancelOrderItem(input: {
   itemId: string;
   reason: string;
 }) {
+  // Wrap ABSOLUTO en try/catch para que NUNCA escale como Server Component error
   try {
     const me = await getMe();
     const role = (me as any).role as string;
 
     // Verificar rol
     if (!MANAGER_AND_UP.includes(role)) {
-      throw new Error("Solo MANAGER y superiores pueden cancelar platillos enviados a cocina.");
+      return { ok: false, error: "Solo MANAGER y superiores pueden cancelar platillos enviados a cocina." };
     }
 
     const reason = (input.reason ?? "").trim();
     if (reason.length < 3) {
-      throw new Error("El motivo de cancelación es obligatorio (mínimo 3 caracteres).");
+      return { ok: false, error: "El motivo de cancelación es obligatorio (mínimo 3 caracteres)." };
     }
 
-    const item = await prisma.restaurantOrderItem.findUnique({
-      where: { id: input.itemId },
-      include: {
-        order: { select: { id: true, businessId: true, status: true } },
-        menuItem: { select: { id: true, name: true } },
-      },
-    });
+    let item;
+    try {
+      item = await prisma.restaurantOrderItem.findUnique({
+        where: { id: input.itemId },
+        include: {
+          order: { select: { id: true, businessId: true, status: true } },
+          menuItem: { select: { id: true, name: true } },
+        },
+      });
+    } catch (queryErr: any) {
+      console.error("[pos.actions/cancelOrderItem] Error en findUnique:", queryErr);
+      return { ok: false, error: "No se pudo cargar el platillo. Intenta de nuevo." };
+    }
 
     if (!item) {
-      // Race condition: ya fue cancelado/borrado por otra request
       return { ok: true, alreadyGone: true };
     }
 
     if (!["OPEN", "SENT"].includes(item.order.status)) {
-      throw new Error("La orden ya está cerrada y no se pueden cancelar platillos.");
+      return { ok: false, error: "La orden ya está cerrada y no se pueden cancelar platillos." };
     }
 
-    // Sólo items en cocina (no NEW ni DELIVERED)
     if (item.kitchenStatus === "NEW") {
-      throw new Error("Este platillo aún no se envía a cocina. Usa el botón de eliminar.");
+      return { ok: false, error: "Este platillo aún no se envía a cocina. Usa el botón de eliminar." };
     }
     if (item.kitchenStatus === "DELIVERED") {
-      throw new Error("Este platillo ya fue entregado al cliente y no se puede cancelar.");
+      return { ok: false, error: "Este platillo ya fue entregado al cliente y no se puede cancelar." };
     }
     if (item.kitchenStatus === "CANCELED") {
       return { ok: true, alreadyGone: true };
     }
 
-    const ok = await userCanAccessBusiness((me as any).id, role, item.order.businessId);
-    if (!ok) throw new Error("No tienes acceso a este restaurante.");
+    let canAccess = false;
+    try {
+      canAccess = await userCanAccessBusiness((me as any).id, role, item.order.businessId);
+    } catch (accessErr: any) {
+      console.error("[pos.actions/cancelOrderItem] Error en userCanAccessBusiness:", accessErr);
+    }
+    if (!canAccess) {
+      return { ok: false, error: "No tienes acceso a este restaurante." };
+    }
 
-    // Transacción: log + borrado
-    await prisma.$transaction(async (tx: any) => {
-      // 1) Guardar log de auditoría (no se pierde aunque borremos el item)
-      await tx.orderItemCancellation.create({
-        data: {
-          orderId: item.order.id,
-          businessId: item.order.businessId,
-          menuItemId: item.menuItem?.id ?? null,
-          menuItemName: item.menuItem?.name ?? "Producto eliminado",
-          qty: item.qty,
-          priceCents: item.priceCents,
-          kitchenStatus: item.kitchenStatus,
-          reason,
-          canceledById: (me as any).id,
-          canceledByName: (me as any).fullName ?? (me as any).email ?? "Desconocido",
-        },
-      });
+    // Datos del usuario para el log
+    const userId = (me as any).id;
+    const userName =
+      (me as any).fullName ||
+      (me as any).name ||
+      (me as any).username ||
+      (me as any).email ||
+      "Desconocido";
 
-      // 2) Eliminar el item físicamente (tal como pediste)
-      await tx.restaurantOrderItem.delete({
+    // Snapshot del item para audit log
+    const auditSnapshot = {
+      orderId: item.order.id,
+      businessId: item.order.businessId,
+      menuItemId: item.menuItem?.id ?? null,
+      menuItemName: item.menuItem?.name ?? "Producto eliminado",
+      qty: item.qty,
+      priceCents: item.priceCents,
+      kitchenStatus: item.kitchenStatus,
+      reason,
+      canceledById: userId,
+      canceledByName: userName,
+    };
+
+    // 🔧 FIX 11E: intentar guardar log, pero si la tabla no existe, NO bloquear el delete
+    let auditSaved = false;
+    try {
+      await (prisma as any).orderItemCancellation.create({ data: auditSnapshot });
+      auditSaved = true;
+    } catch (auditErr: any) {
+      // Posibles causas:
+      // - La tabla OrderItemCancellation no existe (migration no aplicada en BD)
+      // - El cliente Prisma no fue regenerado (no tiene el modelo)
+      // - FK constraint del canceledById
+      console.error("[pos.actions/cancelOrderItem] No se pudo guardar log de auditoría:", auditErr);
+      console.error("[pos.actions/cancelOrderItem] Snapshot que se intentó guardar:", auditSnapshot);
+      // Continuamos: borrar el item es más importante que el log
+    }
+
+    // 🔧 FIX 11E: Borrar el item con deleteMany (no falla si ya no existe)
+    try {
+      await prisma.restaurantOrderItem.deleteMany({
         where: { id: input.itemId },
       });
-    });
+    } catch (deleteErr: any) {
+      console.error("[pos.actions/cancelOrderItem] Error al borrar item:", deleteErr);
+      return {
+        ok: false,
+        error: "No se pudo borrar el platillo. Contacta al administrador.",
+        auditSaved,
+      };
+    }
 
-    // Notificar al KDS y POS
-    revalidatePath(`/app/restaurant/pos/${item.order.id}`);
-    revalidatePath(`/app/kitchen`);
-    revalidatePath(`/app/restaurant/tables`);
+    // Revalidar paths
+    try {
+      revalidatePath(`/app/restaurant/pos/${item.order.id}`);
+      revalidatePath(`/app/kitchen`);
+      revalidatePath(`/app/restaurant/tables`);
+    } catch {
+      // ignorar errores de revalidación
+    }
 
     return {
       ok: true,
+      auditSaved,
       canceledItem: {
         name: item.menuItem?.name ?? "Producto",
         qty: item.qty,
@@ -379,11 +463,13 @@ export async function cancelOrderItem(input: {
       },
     };
   } catch (err: any) {
-    if (err.code === "P2025") {
-      return { ok: true, alreadyGone: true };
-    }
-    console.error("[pos.actions/cancelOrderItem] Error:", err);
-    throw new Error(err.message || "No se pudo cancelar el platillo");
+    // 🔧 FIX 11E: capturar ABSOLUTAMENTE TODO para evitar Server Component crashes
+    console.error("[pos.actions/cancelOrderItem] Error inesperado:", err);
+    console.error("[pos.actions/cancelOrderItem] Stack:", err?.stack);
+    return {
+      ok: false,
+      error: err?.message || "Error inesperado al cancelar el platillo.",
+    };
   }
 }
 

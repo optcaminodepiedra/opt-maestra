@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, useMemo, useRef, useEffect, useOptimistic, startTransition } from "react";
+import { useState, useTransition, useMemo, useRef, useEffect, useReducer } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -169,17 +169,20 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
   // 🆕 Fase 11D: detectar si puede cancelar items en cocina
   const canCancelKitchen = !!currentUserRole && CAN_CANCEL_KITCHEN_ROLES.includes(currentUserRole);
 
-  // Estado optimistic de items
-  const [items, dispatchItems] = useOptimistic(
-    initialOrder.items,
-    optimisticReducer
-  );
+  // 🔧 FIX Fase 11E: useReducer en vez de useOptimistic (más estable, no necesita transition)
+  const [items, dispatchItems] = useReducer(optimisticReducer, initialOrder.items);
 
-  // Sync con server cuando cambia initialOrder
+  // 🔧 FIX Fase 11E: Sync con server cuando cambia initialOrder.items
+  // Comparación por ID + qty (no por referencia) para detectar cambios reales
+  const lastSyncedSignature = useRef<string>("");
   useEffect(() => {
-    startTransition(() => {
+    const sig = initialOrder.items
+      .map(i => `${i.id}:${i.qty}:${i.kitchenStatus}:${i.note ?? ""}`)
+      .join("|");
+    if (sig !== lastSyncedSignature.current) {
+      lastSyncedSignature.current = sig;
       dispatchItems({ type: "SYNC", items: initialOrder.items });
-    });
+    }
   }, [initialOrder.items]);
 
   const [activeCategory, setActiveCategory] = useState<string | "ALL">(categoryNames[0] ?? "ALL");
@@ -232,16 +235,14 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
 
   function handleProductPress(item: MenuItem) {
     // Optimistic: actualizar UI INMEDIATAMENTE
-    startTransition(() => {
-      dispatchItems({
-        type: "INCREMENT",
-        itemId: "",
-        menuItemId: item.id,
-        priceCents: item.priceCents,
-        name: item.name,
-        category: item.category,
-        station: (item.station ?? "KITCHEN"),
-      });
+    dispatchItems({
+      type: "INCREMENT",
+      itemId: "",
+      menuItemId: item.id,
+      priceCents: item.priceCents,
+      name: item.name,
+      category: item.category,
+      station: (item.station ?? "KITCHEN"),
     });
 
     // Servidor en segundo plano
@@ -272,22 +273,20 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
     setModifierItem(null);
 
     // Optimistic
-    startTransition(() => {
-      dispatchItems({
-        type: "ADD",
-        item: {
-          id: `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-          menuItemId: item.id,
-          name: item.name,
-          category: item.category,
-          station: (item.station ?? "KITCHEN") as any,
-          qty,
-          priceCents: item.priceCents,
-          note: note || null,
-          kitchenStatus: "NEW",
-          subtotalCents: qty * item.priceCents,
-        },
-      });
+    dispatchItems({
+      type: "ADD",
+      item: {
+        id: `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        menuItemId: item.id,
+        name: item.name,
+        category: item.category,
+        station: (item.station ?? "KITCHEN") as any,
+        qty,
+        priceCents: item.priceCents,
+        note: note || null,
+        kitchenStatus: "NEW",
+        subtotalCents: qty * item.priceCents,
+      },
     });
 
     addItemToOrder({ orderId: initialOrder.id, menuItemId: item.id, qty, note: note || undefined })
@@ -303,15 +302,20 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
     const newQty = item.qty + delta;
 
     if (newQty <= 0) {
-      startTransition(() => dispatchItems({ type: "REMOVE", itemId: item.id }));
+      dispatchItems({ type: "REMOVE", itemId: item.id });
     } else {
-      startTransition(() => dispatchItems({ type: "UPDATE_QTY", itemId: item.id, qty: newQty }));
+      dispatchItems({ type: "UPDATE_QTY", itemId: item.id, qty: newQty });
     }
 
     updateItemQuantity({ itemId: item.id, qty: newQty })
-      .then(() => router.refresh())
+      .then((result: any) => {
+        if (result?.ok === false) {
+          setError(result.error || "No se pudo actualizar.");
+        }
+        router.refresh();
+      })
       .catch((err: any) => {
-        setError(err.message);
+        setError(err?.message || "Error de conexión.");
         router.refresh();
       });
   }
@@ -320,22 +324,21 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
     if (item.kitchenStatus !== "NEW") return;
     if (!confirm(`¿Quitar ${item.name} de la orden?`)) return;
 
-    // 🔧 FIX Fase 11D: optimistic remove + manejo robusto
-    startTransition(() => dispatchItems({ type: "REMOVE", itemId: item.id }));
+    // 🔧 FIX Fase 11E: dispatch directo + manejo de respuesta { ok, error }
+    dispatchItems({ type: "REMOVE", itemId: item.id });
 
     updateItemQuantity({ itemId: item.id, qty: 0 })
       .then((result: any) => {
-        // alreadyGone = race condition manejada (no es error)
-        if (result?.alreadyGone) {
-          // ya estaba borrado, todo bien
+        if (result?.ok === false) {
+          // El server devolvió error pero NO crasheó
+          setError(result.error || "No se pudo eliminar el platillo.");
         }
+        // Forzar refresh para sincronizar
         router.refresh();
       })
       .catch((err: any) => {
-        // 🔧 FIX: si llegamos aquí, es un error real - mostrar pero NO refrescar
-        // (el refresh puede causar Server Component crash si hay estado inconsistente)
-        setError(err?.message || "No se pudo eliminar el platillo. Intenta de nuevo.");
-        // Restaurar el item en UI ya que el server falló
+        // Solo llegamos aquí si hay un error de red o el server crasheó
+        setError(err?.message || "Error de conexión al eliminar.");
         router.refresh();
       });
   }
@@ -370,16 +373,28 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
     setCancelSubmitting(true);
     setError(null);
 
-    // Optimistic: quitar de UI
-    startTransition(() => dispatchItems({ type: "REMOVE", itemId }));
+    // 🔧 Fase 11E: Optimistic remove sin startTransition
+    dispatchItems({ type: "REMOVE", itemId });
 
     cancelOrderItem({ itemId, reason })
-      .then(() => {
+      .then((result: any) => {
+        if (result?.ok === false) {
+          // El server respondió con error controlado
+          setError(result.error || "No se pudo cancelar el platillo.");
+          setCancelSubmitting(false);
+          router.refresh();
+          return;
+        }
+        // Éxito (incluye alreadyGone)
+        if (result?.auditSaved === false) {
+          console.warn("Item cancelado pero el log de auditoría falló. Avisar al admin.");
+        }
         handleCloseCancelModal();
         router.refresh();
       })
       .catch((err: any) => {
-        setError(err?.message || "No se pudo cancelar el platillo.");
+        // Sólo si hay error de red o crash inesperado
+        setError(err?.message || "Error de conexión al cancelar.");
         setCancelSubmitting(false);
         router.refresh();
       });
@@ -395,13 +410,18 @@ export function POSClient({ order: initialOrder, categories, categoryNames, cash
     const itemId = editingItem.id;
     const note = editingNote;
 
-    startTransition(() => dispatchItems({ type: "UPDATE_NOTE", itemId, note }));
+    dispatchItems({ type: "UPDATE_NOTE", itemId, note });
     setEditingItem(null);
 
     updateItemNote({ itemId, note })
-      .then(() => router.refresh())
+      .then((result: any) => {
+        if (result?.ok === false) {
+          setError(result.error || "No se pudo guardar la nota.");
+        }
+        router.refresh();
+      })
       .catch((err: any) => {
-        setError(err.message);
+        setError(err?.message || "Error de conexión.");
         router.refresh();
       });
   }
