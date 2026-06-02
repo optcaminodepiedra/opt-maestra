@@ -3,6 +3,8 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
 import bcrypt from "bcrypt";
 import { prisma } from "@/lib/prisma";
+import { logAudit } from "@/lib/audit";
+import { AUDIT_ACTIONS } from "@/lib/audit-actions";
 
 export const authOptions: NextAuthOptions = {
   session: { strategy: "jwt" },
@@ -83,6 +85,49 @@ export const authOptions: NextAuthOptions = {
       return session;
     },
   },
+
+  // 🔍 Fase 11F: Eventos para audit log
+  events: {
+    async signIn({ user, account }) {
+      try {
+        await logAudit({
+          user: {
+            id: (user as any).id,
+            name: (user as any).username ?? (user as any).name ?? (user as any).email,
+            role: (user as any).role,
+          },
+          action: AUDIT_ACTIONS.LOGIN_SUCCESS,
+          entity: "User",
+          entityId: (user as any).id,
+          severity: "LOW",
+          summary: `Inicio de sesión vía ${account?.provider ?? "credentials"}`,
+          metadata: { provider: account?.provider },
+        });
+      } catch (e) {
+        console.error("[auth/events.signIn] audit failed:", e);
+      }
+    },
+    async signOut({ token }) {
+      try {
+        await logAudit({
+          user: {
+            id: (token as any).uid,
+            name: (token as any).username ?? (token as any).name,
+            role: (token as any).role,
+          },
+          action: AUDIT_ACTIONS.LOGOUT,
+          entity: "User",
+          entityId: (token as any).uid,
+          severity: "LOW",
+          summary: "Cierre de sesión",
+          metadata: null,
+        });
+      } catch (e) {
+        console.error("[auth/events.signOut] audit failed:", e);
+      }
+    },
+  },
+
   pages: {
     signIn: "/login",
   },

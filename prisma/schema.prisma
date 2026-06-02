@@ -795,18 +795,29 @@ model CatalogItem {
 }
 
 model AuditLog {
-  id        String   @id @default(cuid())
-  actorId   String?
-  actorName String?
-  action    String
-  target    String
-  targetId  String?
-  before    String?
-  after     String?
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  userId     String?  // nullable para LOGIN_FAILED de usuarios inexistentes
+  userName   String
+  userRole   String?
+  businessId String?
+  action     String   // SALE_CREATED, ITEM_CANCELED, PRICE_EDITED, etc.
+  entity     String   // Sale, MenuItem, InventoryItem, etc.
+  entityId   String?
+  severity   String   @default("LOW") // LOW | MEDIUM | HIGH | CRITICAL
+  summary    String
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
 
-  @@index([createdAt])
+  @@index([createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([businessId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@index([severity, createdAt(sort: Desc)])
+  @@index([entity, entityId])
 }
+
 
 enum RoomStatus {
   AVAILABLE

@@ -3,6 +3,8 @@
 import { prisma } from "@/lib/prisma";
 import { getMe } from "@/lib/session";
 import { revalidatePath } from "next/cache";
+import { logAudit, logAuditAsync, describeChanges, fmtMxn } from "@/lib/audit";
+import { AUDIT_ACTIONS } from "@/lib/audit-actions";
 
 const GLOBAL_ROLES = ["MASTER_ADMIN", "OWNER", "SUPERIOR"];
 const INVENTORY_ROLES = ["INVENTORY"];
@@ -136,6 +138,29 @@ export async function createInventoryMovement(input: {
   revalidatePath("/app/inventory/stock");
   revalidatePath("/app/inventory/movements");
   revalidatePath("/app/inventory");
+
+  // 🔍 Fase 11F: Audit log
+  const actionKey =
+    input.type === "IN" ? AUDIT_ACTIONS.INVENTORY_MOVEMENT_IN :
+    input.type === "OUT" ? AUDIT_ACTIONS.INVENTORY_MOVEMENT_OUT :
+    input.type === "ADJUST" ? AUDIT_ACTIONS.INVENTORY_MOVEMENT_ADJUST :
+    AUDIT_ACTIONS.INVENTORY_MOVEMENT_TRANSFER;
+  const severity = input.type === "ADJUST" ? "HIGH" : input.type === "TRANSFER" ? "MEDIUM" : "LOW";
+  const typeLabel =
+    input.type === "IN" ? "Entrada" :
+    input.type === "OUT" ? "Salida" :
+    input.type === "ADJUST" ? "Ajuste" : "Transferencia";
+  logAuditAsync({
+    user: { id: (me as any).id, name: (me as any).username ?? (me as any).name, role: (me as any).role },
+    businessId: item.businessId,
+    action: actionKey,
+    entity: "InventoryItem",
+    entityId: item.id,
+    severity: severity as any,
+    summary: `${typeLabel}: ${input.qty} de ${item.name}${input.note ? ` (${input.note})` : ""}`,
+    metadata: { itemName: item.name, qty: input.qty, type: input.type, note: input.note, destinationBusinessId: input.destinationBusinessId },
+  });
+
   return { ok: true };
 }
 
@@ -285,6 +310,28 @@ export async function createInventoryItem(input: {
   revalidatePath("/app/manager/restaurant/inventory");
   revalidatePath("/app/manager/ranch/inventory");
   revalidatePath("/app/manager/ops");
+
+  // 🔍 Fase 11F: Audit log
+  logAuditAsync({
+    user: { id: (me as any).id, name: (me as any).username ?? (me as any).name, role: (me as any).role },
+    businessId: input.businessId,
+    action: AUDIT_ACTIONS.INVENTORY_ITEM_CREATED,
+    entity: "InventoryItem",
+    entityId: created.id,
+    severity: "LOW",
+    summary: `Creó producto "${created.name}"${initialOnHand > 0 ? ` con stock inicial ${initialOnHand}` : ""}`,
+    metadata: {
+      name: created.name,
+      sku: input.sku,
+      category: input.category,
+      unit: input.unit,
+      onHandQty: initialOnHand,
+      minQty: input.minQty,
+      maxQty: input.maxQty,
+      lastPriceCents: input.lastPriceCents,
+    },
+  });
+
   return { ok: true, id: created.id, name: created.name };
 }
 
@@ -334,11 +381,12 @@ export async function updateInventoryItem(input: {
   notes?: string | null;
   isActive?: boolean;
 }) {
-  const item = await prisma.inventoryItem.findUnique({
+  // 🔍 Fase 11F: cargar item completo ANTES para tener snapshot del estado previo
+  const itemBefore = await prisma.inventoryItem.findUnique({
     where: { id: input.id },
-    select: { businessId: true, sku: true },
   });
-  if (!item) throw new Error("Producto no encontrado.");
+  if (!itemBefore) throw new Error("Producto no encontrado.");
+  const item = itemBefore;
   await assertCanManageInventory(item.businessId);
 
   // Validar SKU único si cambió
@@ -359,7 +407,7 @@ export async function updateInventoryItem(input: {
     throw new Error("El stock máximo no puede ser menor al mínimo.");
   }
 
-  await prisma.inventoryItem.update({
+  const updated = await prisma.inventoryItem.update({
     where: { id: input.id },
     data: {
       ...(input.name !== undefined && { name: input.name.trim() }),
@@ -380,6 +428,49 @@ export async function updateInventoryItem(input: {
   revalidatePath("/app/manager/restaurant/inventory");
   revalidatePath("/app/manager/ranch/inventory");
   revalidatePath(`/app/inventory/items/${input.id}/edit`);
+
+  // 🔍 Fase 11F: Audit log con diff
+  try {
+    const me = await getMe();
+    const labelMap = {
+      name: "Nombre",
+      sku: "SKU",
+      category: "Categoría",
+      unit: "Unidad",
+      minQty: "Mín",
+      maxQty: "Máx",
+      lastPriceCents: "Costo",
+      supplierName: "Proveedor",
+      notes: "Notas",
+      isActive: "Activo",
+    };
+    const before: any = {
+      name: item.name, sku: item.sku, category: item.category, unit: item.unit,
+      minQty: item.minQty, maxQty: (item as any).maxQty ?? 0,
+      lastPriceCents: item.lastPriceCents, supplierName: item.supplierName,
+      notes: (item as any).notes ?? null, isActive: item.isActive,
+    };
+    const after: any = {
+      name: updated.name, sku: updated.sku, category: updated.category, unit: updated.unit,
+      minQty: updated.minQty, maxQty: (updated as any).maxQty ?? 0,
+      lastPriceCents: updated.lastPriceCents, supplierName: updated.supplierName,
+      notes: (updated as any).notes ?? null, isActive: updated.isActive,
+    };
+    const { summary, metadata } = describeChanges(before, after, labelMap);
+    if (summary) {
+      logAuditAsync({
+        user: { id: (me as any).id, name: (me as any).username ?? (me as any).name, role: (me as any).role },
+        businessId: item.businessId,
+        action: AUDIT_ACTIONS.INVENTORY_ITEM_EDITED,
+        entity: "InventoryItem",
+        entityId: input.id,
+        severity: "MEDIUM",
+        summary: `Editó "${item.name}" → ${summary}`,
+        metadata: { itemName: item.name, ...metadata },
+      });
+    }
+  } catch {}
+
   return { ok: true };
 }
 
@@ -405,6 +496,22 @@ export async function deactivateInventoryItem(id: string) {
   revalidatePath("/app/inventory");
   revalidatePath("/app/manager/restaurant/inventory");
   revalidatePath("/app/manager/ranch/inventory");
+
+  // 🔍 Fase 11F: Audit log (HIGH severity - es deletion lógica)
+  try {
+    const me = await getMe();
+    logAuditAsync({
+      user: { id: (me as any).id, name: (me as any).username ?? (me as any).name, role: (me as any).role },
+      businessId: item.businessId,
+      action: AUDIT_ACTIONS.INVENTORY_ITEM_DEACTIVATED,
+      entity: "InventoryItem",
+      entityId: id,
+      severity: "HIGH",
+      summary: `Desactivó producto "${item.name}"${item.onHandQty > 0 ? ` (tenía ${item.onHandQty} en stock)` : ""}`,
+      metadata: { itemName: item.name, hadStock: item.onHandQty > 0, stockAtDeactivation: item.onHandQty },
+    });
+  } catch {}
+
   return { ok: true, name: item.name, hadStock: item.onHandQty > 0 };
 }
 
@@ -429,6 +536,22 @@ export async function reactivateInventoryItem(id: string) {
   revalidatePath("/app/inventory");
   revalidatePath("/app/manager/restaurant/inventory");
   revalidatePath("/app/manager/ranch/inventory");
+
+  // 🔍 Fase 11F: Audit log
+  try {
+    const me = await getMe();
+    logAuditAsync({
+      user: { id: (me as any).id, name: (me as any).username ?? (me as any).name, role: (me as any).role },
+      businessId: item.businessId,
+      action: AUDIT_ACTIONS.INVENTORY_ITEM_REACTIVATED,
+      entity: "InventoryItem",
+      entityId: id,
+      severity: "MEDIUM",
+      summary: `Reactivó producto "${item.name}"`,
+      metadata: { itemName: item.name },
+    });
+  } catch {}
+
   return { ok: true, name: item.name };
 }
 

@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { getMe } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { userCanAccessBusiness } from "@/lib/restaurant-resolve";
+import { logAudit, logAuditAsync, fmtMxn } from "@/lib/audit";
+import { AUDIT_ACTIONS, ACTION_SEVERITY } from "@/lib/audit-actions";
 
 // Roles que pueden cancelar items YA enviados a cocina (Fase 11D)
 const MANAGER_AND_UP = [
@@ -142,6 +144,19 @@ export async function addItemToOrder(input: {
         where: { id: existing.id },
         data: { qty: existing.qty + qty },
       });
+
+      // 🔍 Fase 11F: Audit log
+      logAuditAsync({
+        user: { id: (me as any).id, name: (me as any).username ?? (me as any).name, role },
+        businessId: order.businessId,
+        action: AUDIT_ACTIONS.ORDER_ITEM_ADDED,
+        entity: "RestaurantOrderItem",
+        entityId: existing.id,
+        severity: "LOW",
+        summary: `+${qty} ${menuItem.name} (consolidado, total: ${updated.qty})`,
+        metadata: { orderId: order.id, menuItemId: menuItem.id, qty, consolidated: true, totalQty: updated.qty },
+      });
+
       return {
         ok: true,
         consolidated: true,
@@ -170,6 +185,18 @@ export async function addItemToOrder(input: {
       note: noteVal,
       kitchenStatus: "NEW",
     },
+  });
+
+  // 🔍 Fase 11F: Audit log
+  logAuditAsync({
+    user: { id: (me as any).id, name: (me as any).username ?? (me as any).name, role },
+    businessId: order.businessId,
+    action: AUDIT_ACTIONS.ORDER_ITEM_ADDED,
+    entity: "RestaurantOrderItem",
+    entityId: created.id,
+    severity: "LOW",
+    summary: `Agregó ${qty}x ${menuItem.name}${noteVal ? ` (nota: ${noteVal})` : ""}`,
+    metadata: { orderId: order.id, menuItemId: menuItem.id, qty, priceCents: menuItem.priceCents, note: noteVal },
   });
 
   return {
@@ -236,9 +263,34 @@ export async function updateItemQuantity(input: { itemId: string; qty: number })
 
     if (input.qty <= 0) {
       try {
+        // Necesitamos info del item para el log antes de borrar
+        let menuItemName = "platillo";
+        try {
+          const itemFull = await prisma.restaurantOrderItem.findUnique({
+            where: { id: input.itemId },
+            include: { menuItem: { select: { name: true } } },
+          });
+          menuItemName = itemFull?.menuItem?.name ?? "platillo";
+        } catch {}
+
         const result = await prisma.restaurantOrderItem.deleteMany({
           where: { id: input.itemId },
         });
+
+        // 🔍 Fase 11F: Audit log
+        if (result.count > 0) {
+          logAuditAsync({
+            user: { id: (me as any).id, name: (me as any).username ?? (me as any).name, role },
+            businessId: item.order.businessId,
+            action: AUDIT_ACTIONS.ORDER_ITEM_REMOVED,
+            entity: "RestaurantOrderItem",
+            entityId: input.itemId,
+            severity: "LOW",
+            summary: `Quitó ${item.qty}x ${menuItemName} de la orden`,
+            metadata: { orderId: item.order.id, qty: item.qty, priceCents: item.priceCents },
+          });
+        }
+
         try {
           revalidatePath(`/app/restaurant/pos/${item.order.id}`);
         } catch {}
@@ -253,10 +305,26 @@ export async function updateItemQuantity(input: { itemId: string; qty: number })
     }
 
     try {
+      const oldQty = item.qty;
       const updated = await prisma.restaurantOrderItem.update({
         where: { id: input.itemId },
         data: { qty: input.qty },
       });
+
+      // 🔍 Fase 11F: Audit log (solo si cambió)
+      if (oldQty !== input.qty) {
+        logAuditAsync({
+          user: { id: (me as any).id, name: (me as any).username ?? (me as any).name, role },
+          businessId: item.order.businessId,
+          action: AUDIT_ACTIONS.ORDER_ITEM_QTY_CHANGED,
+          entity: "RestaurantOrderItem",
+          entityId: input.itemId,
+          severity: "LOW",
+          summary: `Cambió cantidad: ${oldQty} → ${input.qty}`,
+          metadata: { orderId: item.order.id, oldQty, newQty: input.qty },
+        });
+      }
+
       try {
         revalidatePath(`/app/restaurant/pos/${item.order.id}`);
       } catch {}
@@ -452,6 +520,25 @@ export async function cancelOrderItem(input: {
       // ignorar errores de revalidación
     }
 
+    // 🔍 Fase 11F: Audit log (HIGH severity)
+    logAuditAsync({
+      user: { id: userId, name: userName, role },
+      businessId: item.order.businessId,
+      action: AUDIT_ACTIONS.ORDER_ITEM_CANCELED,
+      entity: "RestaurantOrderItem",
+      entityId: input.itemId,
+      severity: "HIGH",
+      summary: `Canceló ${item.qty}x ${item.menuItem?.name ?? "platillo"} en cocina · ${fmtMxn(item.qty * item.priceCents)} · motivo: ${reason}`,
+      metadata: {
+        orderId: item.order.id,
+        menuItemId: item.menuItem?.id,
+        qty: item.qty,
+        priceCents: item.priceCents,
+        kitchenStatus: item.kitchenStatus,
+        reason,
+      },
+    });
+
     return {
       ok: true,
       auditSaved,
@@ -551,6 +638,19 @@ export async function sendOrderToKitchen(orderId: string) {
 
   revalidatePath(`/app/restaurant/pos/${orderId}`);
   revalidatePath("/app/restaurant/tables");
+
+  // 🔍 Fase 11F: Audit log
+  logAuditAsync({
+    user: { id: (me as any).id, name: (me as any).username ?? (me as any).name, role },
+    businessId: order.businessId,
+    action: AUDIT_ACTIONS.ORDER_SENT_KITCHEN,
+    entity: "RestaurantOrder",
+    entityId: orderId,
+    severity: "LOW",
+    summary: `Envió ${newItems.length} platillo(s) a cocina`,
+    metadata: { orderId, itemsSent: newItems.length },
+  });
+
   return { ok: true, itemsSent: newItems.length };
 }
 
@@ -629,6 +729,26 @@ export async function checkoutOrder(input: {
 
   revalidatePath(`/app/restaurant/pos/${order.id}`);
   revalidatePath("/app/restaurant/tables");
+
+  // 🔍 Fase 11F: Audit log
+  logAuditAsync({
+    user: { id: (me as any).id, name: (me as any).username ?? (me as any).name, role },
+    businessId: order.businessId,
+    action: AUDIT_ACTIONS.ORDER_CHECKOUT,
+    entity: "RestaurantOrder",
+    entityId: order.id,
+    severity: "LOW",
+    summary: `Cobró mesa ${order.table?.name ?? "?"} · ${fmtMxn(totalCents)} · ${input.paymentMethod}`,
+    metadata: {
+      orderId: order.id,
+      totalCents,
+      subtotalCents: subtotal,
+      tipCents,
+      method: input.paymentMethod,
+      cashpointId: input.cashpointId,
+      tableName: order.table?.name,
+    },
+  });
 
   return {
     ok: true,
