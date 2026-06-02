@@ -39,6 +39,18 @@ import {
   Bell,
   CreditCard,
   CircleDot,
+  // 🆕 Fase 11G
+  ShieldAlert,
+  Printer,
+  KeyRound,
+  Package2,
+  Calendar,
+  ArrowLeftRight,
+  ConciergeBell,
+  Sparkles,
+  BookOpen,
+  Pencil,
+  HelpCircle,
 } from "lucide-react";
 
 const iconMap: Record<IconName, any> = {
@@ -74,6 +86,19 @@ const iconMap: Record<IconName, any> = {
 
   bell: Bell,
   creditcard: CreditCard,
+
+  // 🆕 Fase 11G
+  audit: ShieldAlert,
+  printer: Printer,
+  access: KeyRound,
+  products: Package2,
+  calendar: Calendar,
+  movements: ArrowLeftRight,
+  frontdesk: ConciergeBell,
+  housekeeping: Sparkles,
+  ledger: BookOpen,
+  edit: Pencil,
+  help: HelpCircle,
 };
 
 // Fallback seguro: si un ícono no está registrado, usamos CircleDot
@@ -100,6 +125,9 @@ function ItemRow({
   // Badge especial para notificaciones: contador en vez de texto
   const showNotifCount = it.href === "/app/notifications" && unreadCount && unreadCount > 0;
 
+  // 🆕 Fase 11G: badges "Nuevo" pintados en verde para destacar
+  const isNewBadge = it.badge === "Nuevo";
+
   return (
     <Link
       href={it.href}
@@ -121,6 +149,10 @@ function ItemRow({
       {showNotifCount ? (
         <span className="text-[10px] px-1.5 py-[2px] rounded-full bg-red-500 text-white font-semibold min-w-[18px] text-center">
           {unreadCount > 99 ? "99+" : unreadCount}
+        </span>
+      ) : isNewBadge ? (
+        <span className="text-[10px] px-2 py-[2px] rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 font-medium">
+          {it.badge}
         </span>
       ) : it.badge ? (
         <span className="text-[10px] px-2 py-[2px] rounded-full bg-muted text-muted-foreground border">
