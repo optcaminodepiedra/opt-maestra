@@ -3,11 +3,13 @@ import {
   CalendarClock,
   CalendarDays,
   CheckCircle2,
+  CircleDollarSign,
   ClipboardCheck,
   Clock3,
   FileText,
   LockKeyhole,
   MapPin,
+  Plus,
   Search,
   Users,
 } from "lucide-react";
@@ -112,6 +114,9 @@ function formatTime(date: Date): string {
 }
 
 function eventLocation(event: EventDashboardRow): string {
+  if (event.locationBusiness && event.locationName) {
+    return `${event.locationName} · ${event.locationBusiness.name}`;
+  }
   return event.locationBusiness?.name || event.locationName || event.business.name;
 }
 
@@ -129,6 +134,56 @@ function StatusBadge({ status }: { status: string }) {
     <Badge variant="outline" className={`text-[10px] ${config.className}`}>
       <Icon className="h-3 w-3" />
       {config.label}
+    </Badge>
+  );
+}
+
+const PAYMENT_TIMING_LABELS: Record<string, string> = {
+  NOT_DEFINED: "Pago por definir",
+  BEFORE_EVENT: "Pago antes",
+  AT_EVENT: "Pago al momento",
+  AFTER_EVENT: "Pago después",
+  PARTIAL: "Anticipo y liquidación",
+  NO_CHARGE: "Sin cobro",
+};
+
+function PaymentBadge({ event }: { event: EventDashboardRow }) {
+  if (event.paymentTiming === "NO_CHARGE" || event.paymentStatus === "NOT_REQUIRED") {
+    return (
+      <Badge variant="outline" className="text-[10px] text-muted-foreground">
+        Sin cobro
+      </Badge>
+    );
+  }
+
+  if (event.paymentStatus === "PAID") {
+    return (
+      <Badge
+        variant="outline"
+        className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200"
+      >
+        Pagado
+      </Badge>
+    );
+  }
+
+  if (event.paymentStatus === "PARTIAL") {
+    return (
+      <Badge
+        variant="outline"
+        className="text-[10px] bg-amber-50 text-amber-700 border-amber-200"
+      >
+        Pago parcial
+      </Badge>
+    );
+  }
+
+  return (
+    <Badge
+      variant="outline"
+      className="text-[10px] bg-blue-50 text-blue-700 border-blue-200"
+    >
+      {PAYMENT_TIMING_LABELS[event.paymentTiming] ?? "Pago pendiente"}
     </Badge>
   );
 }
@@ -164,8 +219,14 @@ function RequirementBadge({ event }: { event: EventDashboardRow }) {
   );
 }
 
-export function EventsDashboard({ data }: { data: EventDashboardData }) {
-  const { filters, businesses, stats, events } = data;
+export function EventsDashboard({
+  data,
+  createdEventId,
+}: {
+  data: EventDashboardData;
+  createdEventId?: string | null;
+}) {
+  const { filters, businesses, stats, events, userScope } = data;
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-5">
@@ -180,10 +241,27 @@ export function EventsDashboard({ data }: { data: EventDashboardData }) {
           </p>
         </div>
 
-        <Badge variant="secondary" className="w-fit">
-          {events.length} evento(s) en la vista
-        </Badge>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge variant="secondary" className="w-fit">
+            {events.length} evento(s) en la vista
+          </Badge>
+          {userScope.canCreateEvents && (
+            <Button asChild>
+              <Link href="/app/events/new">
+                <Plus className="h-4 w-4" />
+                Nuevo evento
+              </Link>
+            </Button>
+          )}
+        </div>
       </div>
+
+      {createdEventId && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 flex items-center gap-2">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          Evento guardado correctamente. Ya aparece en la agenda.
+        </div>
+      )}
 
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
         <KpiCard
@@ -292,9 +370,17 @@ export function EventsDashboard({ data }: { data: EventDashboardData }) {
             <CalendarDays className="h-12 w-12 text-muted-foreground/35 mx-auto mb-3" />
             <h2 className="text-base font-semibold">No hay eventos en esta vista</h2>
             <p className="text-sm text-muted-foreground mt-1 max-w-md mx-auto">
-              Ajusta los filtros o cambia el rango de fechas. La creación y edición de eventos se
-              agregará en la siguiente entrega.
+              Ajusta los filtros o cambia el rango de fechas. También puedes registrar el primer
+              evento desde esta misma sección.
             </p>
+            {userScope.canCreateEvents && (
+              <Button asChild className="mt-4">
+                <Link href="/app/events/new">
+                  <Plus className="h-4 w-4" />
+                  Crear evento
+                </Link>
+              </Button>
+            )}
           </CardContent>
         </Card>
       ) : (
@@ -313,6 +399,7 @@ export function EventsDashboard({ data }: { data: EventDashboardData }) {
                     <TableHead>Personas</TableHead>
                     <TableHead>Requerimientos</TableHead>
                     <TableHead>Requisiciones</TableHead>
+                    <TableHead>Pago</TableHead>
                     <TableHead className="pr-6">Estado</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -336,7 +423,7 @@ export function EventsDashboard({ data }: { data: EventDashboardData }) {
                           )}
                         </div>
                         <p className="text-xs text-muted-foreground mt-1">
-                          {event.eventType || "Tipo sin definir"}
+                          {event.eventType || "Tipo sin definir"} · Creó: {event.createdBy.fullName}
                           {event.responsibleUser
                             ? ` · Responsable: ${event.responsibleUser.fullName}`
                             : " · Sin responsable"}
@@ -369,6 +456,16 @@ export function EventsDashboard({ data }: { data: EventDashboardData }) {
                         ) : (
                           <span className="text-xs text-muted-foreground">Sin requisición</span>
                         )}
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <div className="space-y-1">
+                          <PaymentBadge event={event} />
+                          {userScope.canViewFinancials && event.quotedAmountCents > 0 && (
+                            <p className="text-[11px] text-muted-foreground whitespace-nowrap">
+                              ${(event.paidAmountCents / 100).toLocaleString("es-MX")} de ${(event.quotedAmountCents / 100).toLocaleString("es-MX")}
+                            </p>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="pr-6 align-top">
                         <StatusBadge status={event.status} />
@@ -418,6 +515,7 @@ export function EventsDashboard({ data }: { data: EventDashboardData }) {
 
                   <div className="flex items-center gap-2 flex-wrap">
                     <RequirementBadge event={event} />
+                    <PaymentBadge event={event} />
                     {event.requisitionsCount > 0 ? (
                       <Badge
                         variant="outline"
@@ -433,10 +531,18 @@ export function EventsDashboard({ data }: { data: EventDashboardData }) {
                     )}
                   </div>
 
+                  {userScope.canViewFinancials && event.quotedAmountCents > 0 && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                      <CircleDollarSign className="h-3.5 w-3.5" />
+                      Pagado ${(event.paidAmountCents / 100).toLocaleString("es-MX")} de ${(event.quotedAmountCents / 100).toLocaleString("es-MX")}
+                    </p>
+                  )}
+
                   <p className="text-xs text-muted-foreground">
+                    Creó: {event.createdBy.fullName}
                     {event.responsibleUser
-                      ? `Responsable: ${event.responsibleUser.fullName}`
-                      : "Sin responsable asignado"}
+                      ? ` · Responsable: ${event.responsibleUser.fullName}`
+                      : " · Sin responsable asignado"}
                   </p>
                 </CardContent>
               </Card>

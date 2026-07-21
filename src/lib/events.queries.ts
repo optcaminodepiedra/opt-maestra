@@ -3,6 +3,7 @@ import "server-only";
 import { EventRequirementStatus, EventStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getMe } from "@/lib/session";
+import type { EventCreateData } from "@/lib/events.types";
 
 export const EVENT_STATUSES = [
   "DRAFT",
@@ -38,11 +39,17 @@ export type EventDashboardRow = {
   isPrivate: boolean;
   business: { id: string; name: string };
   locationBusiness: { id: string; name: string } | null;
+  createdBy: { id: string; fullName: string };
   responsibleUser: { id: string; fullName: string } | null;
   requirementsTotal: number;
   requirementsPending: number;
   requirementsReady: number;
   requisitionsCount: number;
+  paymentTiming: string;
+  paymentStatus: string;
+  quotedAmountCents: number;
+  paidAmountCents: number;
+  paymentDueAt: Date | null;
 };
 
 export type EventDashboardData = {
@@ -52,6 +59,8 @@ export type EventDashboardData = {
     role: string;
     canViewPrivate: boolean;
     hasBusinessScope: boolean;
+    canCreateEvents: boolean;
+    canViewFinancials: boolean;
   };
   stats: {
     next7: number;
@@ -71,6 +80,34 @@ const GLOBAL_BUSINESS_ROLES = [
 ];
 
 const PRIVATE_EVENT_ROLES = ["MASTER_ADMIN", "OWNER", "SUPERIOR"];
+export const EVENT_CREATE_ROLES = [
+  "MASTER_ADMIN",
+  "OWNER",
+  "SUPERIOR",
+  "MANAGER",
+  "MANAGER_OPS",
+  "MANAGER_RESTAURANT",
+  "MANAGER_HOTEL",
+  "MANAGER_RANCH",
+  "SALES",
+  "RESERVATIONS",
+  "STAFF_RECEPTION",
+  "STAFF_EXPERIENCES",
+];
+const EVENT_FINANCIAL_ROLES = [
+  "MASTER_ADMIN",
+  "OWNER",
+  "SUPERIOR",
+  "ACCOUNTING",
+  "MANAGER",
+  "MANAGER_OPS",
+  "MANAGER_RESTAURANT",
+  "MANAGER_HOTEL",
+  "MANAGER_RANCH",
+  "SALES",
+  "RESERVATIONS",
+  "STAFF_RECEPTION",
+];
 const ACTIVE_EVENT_STATUSES: EventStatus[] = [
   EventStatus.DRAFT,
   EventStatus.TENTATIVE,
@@ -290,8 +327,14 @@ export async function getEventsDashboardData(
         confirmedGuests: true,
         locationName: true,
         isPrivate: true,
+        paymentTiming: true,
+        paymentStatus: true,
+        quotedAmountCents: true,
+        paidAmountCents: true,
+        paymentDueAt: true,
         business: { select: { id: true, name: true } },
         locationBusiness: { select: { id: true, name: true } },
+        createdBy: { select: { id: true, fullName: true } },
         responsibleUser: { select: { id: true, fullName: true } },
         requirements: { select: { status: true } },
         _count: { select: { requisitions: true } },
@@ -334,6 +377,8 @@ export async function getEventsDashboardData(
       role: scope.role,
       canViewPrivate: scope.canViewPrivate,
       hasBusinessScope: scope.businessIds.length > 0,
+      canCreateEvents: EVENT_CREATE_ROLES.includes(scope.role),
+      canViewFinancials: EVENT_FINANCIAL_ROLES.includes(scope.role),
     },
     stats,
     events: rows.map((event) => ({
@@ -349,6 +394,7 @@ export async function getEventsDashboardData(
       isPrivate: event.isPrivate,
       business: event.business,
       locationBusiness: event.locationBusiness,
+      createdBy: event.createdBy,
       responsibleUser: event.responsibleUser,
       requirementsTotal: event.requirements.length,
       requirementsPending: event.requirements.filter((requirement) =>
@@ -358,6 +404,106 @@ export async function getEventsDashboardData(
         (requirement) => requirement.status === EventRequirementStatus.READY
       ).length,
       requisitionsCount: event._count.requisitions,
+      paymentTiming: event.paymentTiming,
+      paymentStatus: event.paymentStatus,
+      quotedAmountCents: event.quotedAmountCents,
+      paidAmountCents: event.paidAmountCents,
+      paymentDueAt: event.paymentDueAt,
+    })),
+  };
+}
+
+export async function getEventCreateData(): Promise<EventCreateData> {
+  const scope = await resolveEventScope();
+
+  if (!EVENT_CREATE_ROLES.includes(scope.role)) {
+    throw new Error("No tienes permisos para crear eventos.");
+  }
+
+  const userWhere: Prisma.UserWhereInput = {
+    isActive: true,
+    ...(GLOBAL_BUSINESS_ROLES.includes(scope.role)
+      ? {}
+      : {
+          OR: [
+            { id: scope.userId },
+            { businessId: { in: scope.businessIds } },
+            { primaryBusinessId: { in: scope.businessIds } },
+            { businessAccess: { some: { businessId: { in: scope.businessIds } } } },
+          ],
+        }),
+  };
+
+  const requisitionWhere: Prisma.RequisitionWhereInput = {
+    eventId: null,
+    status: {
+      in: [
+        "DRAFT",
+        "SUBMITTED",
+        "APPROVED",
+        "ORDERED",
+        "RECEIVED_PARTIAL",
+        "RECEIVED",
+      ],
+    },
+    ...(GLOBAL_BUSINESS_ROLES.includes(scope.role)
+      ? {}
+      : { businessId: { in: scope.businessIds } }),
+  };
+
+  const [creator, responsibleUsers, requisitions] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: scope.userId },
+      select: { id: true, fullName: true, role: true, primaryBusinessId: true },
+    }),
+    prisma.user.findMany({
+      where: userWhere,
+      select: {
+        id: true,
+        fullName: true,
+        role: true,
+        primaryBusinessId: true,
+        businessId: true,
+      },
+      orderBy: { fullName: "asc" },
+    }),
+    prisma.requisition.findMany({
+      where: requisitionWhere,
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        kind: true,
+        neededBy: true,
+        business: { select: { id: true, name: true } },
+      },
+      orderBy: [{ neededBy: "asc" }, { createdAt: "desc" }],
+      take: 200,
+    }),
+  ]);
+
+  if (!creator) throw new Error("No se encontró el usuario activo.");
+  if (scope.businesses.length === 0) {
+    throw new Error("No tienes negocios disponibles para registrar el evento.");
+  }
+
+  const defaultBusinessId =
+    creator.primaryBusinessId && scope.businessIds.includes(creator.primaryBusinessId)
+      ? creator.primaryBusinessId
+      : scope.businesses[0].id;
+
+  return {
+    creator: {
+      id: creator.id,
+      fullName: creator.fullName,
+      role: creator.role,
+    },
+    defaultBusinessId,
+    businesses: scope.businesses,
+    responsibleUsers,
+    requisitions: requisitions.map((requisition) => ({
+      ...requisition,
+      neededBy: requisition.neededBy?.toISOString() ?? null,
     })),
   };
 }

@@ -661,6 +661,22 @@ enum EventRequirementStatus {
   CANCELED
 }
 
+enum EventPaymentTiming {
+  NOT_DEFINED
+  BEFORE_EVENT
+  AT_EVENT
+  AFTER_EVENT
+  PARTIAL
+  NO_CHARGE
+}
+
+enum EventPaymentStatus {
+  PENDING
+  PARTIAL
+  PAID
+  NOT_REQUIRED
+}
+
 model InventoryItem {
   id         String    @id @default(cuid())
   businessId String
@@ -790,6 +806,13 @@ model Event {
   internalNotes      String?
   isPrivate          Boolean @default(false)
 
+  paymentTiming      EventPaymentTiming @default(NOT_DEFINED)
+  paymentStatus      EventPaymentStatus @default(PENDING)
+  quotedAmountCents  Int @default(0)
+  paidAmountCents    Int @default(0)
+  paymentDueAt       DateTime?
+  paymentNotes       String?
+
   createdById        String
   responsibleUserId  String?
 
@@ -808,6 +831,7 @@ model Event {
   @@index([locationBusinessId, startsAt])
   @@index([status, startsAt])
   @@index([responsibleUserId, startsAt])
+  @@index([paymentStatus, paymentDueAt])
   @@index([isPrivate])
 }
 
