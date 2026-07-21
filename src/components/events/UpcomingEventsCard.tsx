@@ -96,7 +96,7 @@ export async function UpcomingEventsCard() {
                 Próximos eventos
               </CardTitle>
               <p className="text-xs text-muted-foreground mt-1">
-                Agenda visible según tus negocios y responsabilidades.
+                Agenda general de todos los negocios.
               </p>
             </div>
 

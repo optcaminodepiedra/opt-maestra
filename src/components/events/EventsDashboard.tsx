@@ -239,7 +239,7 @@ export function EventsDashboard({
             <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Eventos</h1>
           </div>
           <p className="text-sm text-muted-foreground mt-1">
-            Consulta fechas, sedes, personas, requerimientos y requisiciones asociadas.
+            Agenda general de todos los negocios, visible para todos los puestos.
           </p>
         </div>
 
@@ -340,7 +340,7 @@ export function EventsDashboard({
               defaultValue={filters.businessId}
               className="md:col-span-3 h-9 rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
             >
-              <option value="all">Todos mis negocios</option>
+              <option value="all">Todos los negocios</option>
               {businesses.map((business) => (
                 <option key={business.id} value={business.id}>
                   {business.name}

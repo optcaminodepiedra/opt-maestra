@@ -198,28 +198,25 @@ async function resolveEventScope() {
     businessIds = Array.from(ids);
   }
 
-  const businesses = await prisma.business.findMany({
-    where: isGlobalBusiness ? undefined : { id: { in: businessIds } },
-    select: { id: true, name: true },
-    orderBy: { name: "asc" },
-  });
+  const [businesses, viewBusinesses] = await Promise.all([
+    prisma.business.findMany({
+      where: isGlobalBusiness ? undefined : { id: { in: businessIds } },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    prisma.business.findMany({
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+  ]);
 
   if (isGlobalBusiness) businessIds = businesses.map((business) => business.id);
 
-  const visibilityWhere: Prisma.EventWhereInput = isGlobalBusiness
-    ? {}
-    : {
-        OR: [
-          ...(businessIds.length > 0
-            ? [
-                { businessId: { in: businessIds } },
-                { locationBusinessId: { in: businessIds } },
-              ]
-            : []),
-          { createdById: userId },
-          { responsibleUserId: userId },
-        ],
-      };
+  // La agenda es información operativa general: todos los puestos pueden ver
+  // los eventos de todos los negocios, aunque no tengan acceso administrativo
+  // a la unidad que los organiza. La edición y creación continúan limitadas por
+  // businessIds y por los roles definidos más abajo.
+  const visibilityWhere: Prisma.EventWhereInput = {};
 
   const privacyWhere: Prisma.EventWhereInput = canViewPrivate
     ? {}
@@ -236,6 +233,7 @@ async function resolveEventScope() {
     role,
     businessIds,
     businesses,
+    viewBusinesses,
     canViewPrivate,
     visibilityWhere,
     privacyWhere,
@@ -281,7 +279,9 @@ export async function getEventsDashboardData(
   const scope = await resolveEventScope();
   const today = mexicoTodayStart();
 
-  const selectedBusinessId = scope.businessIds.includes(filters.businessId)
+  const selectedBusinessId = scope.viewBusinesses.some(
+    (business) => business.id === filters.businessId
+  )
     ? filters.businessId
     : "all";
 
@@ -384,7 +384,7 @@ export async function getEventsDashboardData(
 
   return {
     filters,
-    businesses: scope.businesses,
+    businesses: scope.viewBusinesses,
     userScope: {
       role: scope.role,
       canViewPrivate: scope.canViewPrivate,
@@ -791,7 +791,8 @@ export type UpcomingEventsCardData = {
 
 /**
  * Resumen liviano para insertar la agenda de eventos en cualquier dashboard.
- * Respeta exactamente el mismo alcance por negocio y privacidad del módulo principal.
+ * Muestra la agenda general de todos los negocios a todos los puestos.
+ * Los eventos marcados como privados conservan su restricción de privacidad.
  */
 export async function getUpcomingEventsCardData(
   requestedLimit = 4
