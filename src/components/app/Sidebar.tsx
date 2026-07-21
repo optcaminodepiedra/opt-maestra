@@ -51,6 +51,7 @@ import {
   BookOpen,
   Pencil,
   HelpCircle,
+  Cable,
 } from "lucide-react";
 
 const iconMap: Record<IconName, any> = {
@@ -99,6 +100,7 @@ const iconMap: Record<IconName, any> = {
   ledger: BookOpen,
   edit: Pencil,
   help: HelpCircle,
+  integration: Cable,
 };
 
 // Fallback seguro: si un ícono no está registrado, usamos CircleDot

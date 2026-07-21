@@ -7,7 +7,7 @@ export type IconName =
   | "bell" | "creditcard"
   // 🆕 Fase 11G
   | "audit" | "printer" | "access" | "products" | "calendar" | "movements"
-  | "frontdesk" | "housekeeping" | "ledger" | "edit" | "help";
+  | "frontdesk" | "housekeeping" | "ledger" | "edit" | "help" | "integration";
 
 export type NavItem = {
   label: string;
@@ -225,6 +225,7 @@ const SECTIONS: RoledSection[] = [
       // Lo que ya existía pero no estaba enlazado
       { label: "Control de acceso",     href: "/app/admin/access-control", icon: "access",   roles: DIRECTION },
       { label: "Impresoras",            href: "/app/admin/printers",       icon: "printer",  roles: DIRECTION },
+      { label: "Integraciones",          href: "/app/admin/integrations",   icon: "integration", roles: DIRECTION, badge: "Nuevo" },
       // Lo que ya estaba
       { label: "Usuarios",              href: "/app/owner/users",          icon: "users",    roles: DIRECTION },
       { label: "Negocios",              href: "/app/owner/businesses",     icon: "apps",     roles: DIRECTION },

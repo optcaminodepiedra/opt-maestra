@@ -149,6 +149,8 @@ inventoryMovesDestination  InventoryMovement[] @relation("InventoryMovementDesti
 
   importBatches ImportBatch[]
 
+  integrationConnectors IntegrationConnector[]
+
   @@index([linkedHotelBusinessId])
 }
 
@@ -246,6 +248,8 @@ model User {
   importBatchesReverted ImportBatch[] @relation("ImportBatchRevertedBy")
 
   cancellations OrderItemCancellation[] @relation("UserCancellations")
+
+  integrationConnectorsCreated IntegrationConnector[] @relation("IntegrationConnectorCreatedBy")
 }
 
 model UserBusinessAccess {
@@ -1720,3 +1724,88 @@ model OrderItemCancellation {
   @@index([businessId, createdAt(sort: Desc)])
   @@index([orderId])
 }
+
+// ============================================================================
+// FASE 13A · CENTRO DE INTEGRACIONES
+// Conectores para agentes locales (SoftRestaurant) y fuentes en la nube
+// (Google Sheets de hoteles). Esta fase solo crea la base y monitoreo.
+// ============================================================================
+
+enum IntegrationSource {
+  SOFTRESTAURANT
+  GOOGLE_SHEETS_HOTEL
+}
+
+enum IntegrationStatus {
+  SETUP_REQUIRED
+  ACTIVE
+  PAUSED
+  ERROR
+}
+
+enum IntegrationRunStatus {
+  RUNNING
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+model IntegrationConnector {
+  id         String            @id @default(cuid())
+  businessId String
+  name       String
+  source     IntegrationSource
+  status     IntegrationStatus @default(SETUP_REQUIRED)
+  isActive   Boolean           @default(true)
+
+  // Solo para agentes instalados en una computadora local.
+  // Nunca se guarda el token en texto plano: únicamente SHA-256 y prefijo visible.
+  agentTokenHash   String? @unique
+  agentTokenPrefix String?
+
+  // Configuración no secreta: spreadsheetId, pestaña, rangos, carpeta vigilada, etc.
+  config Json?
+
+  lastSeenAt    DateTime?
+  lastSyncAt    DateTime?
+  lastSuccessAt DateTime?
+  lastError     String?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  business  Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdBy User?    @relation("IntegrationConnectorCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  runs      IntegrationRun[]
+
+  @@index([businessId, source])
+  @@index([status, isActive])
+  @@index([lastSeenAt])
+  @@index([lastSyncAt])
+}
+
+model IntegrationRun {
+  id          String               @id @default(cuid())
+  connectorId String
+  status      IntegrationRunStatus @default(RUNNING)
+
+  recordsRead     Int @default(0)
+  recordsInserted Int @default(0)
+  recordsUpdated  Int @default(0)
+  recordsSkipped  Int @default(0)
+  recordsFailed   Int @default(0)
+
+  checkpoint   String?
+  errorSummary String?
+  details      Json?
+
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  connector IntegrationConnector @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+
+  @@index([connectorId, startedAt])
+  @@index([status, startedAt])
+}
+
