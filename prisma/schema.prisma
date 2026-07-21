@@ -119,6 +119,9 @@ inventoryMovesOrigin       InventoryMovement[] @relation("InventoryMovementOrigi
 inventoryMovesDestination  InventoryMovement[] @relation("InventoryMovementDestination")
   requisitions   Requisition[]
 
+  eventsOwned     Event[] @relation("EventBusiness")
+  eventsHosted    Event[] @relation("EventLocationBusiness")
+
   hotelRoomTypes    HotelRoomType[]
   hotelRooms        HotelRoom[]
   hotelReservations HotelReservation[]
@@ -211,6 +214,10 @@ model User {
   inventoryMovesCreated InventoryMovement[] @relation("InventoryMoveCreatedBy")
   reqCreated            Requisition[]       @relation("ReqCreatedBy")
   reqApproved           Requisition[]       @relation("ReqApprovedBy")
+
+  eventsCreated             Event[]            @relation("EventCreatedBy")
+  eventsResponsible         Event[]            @relation("EventResponsible")
+  eventRequirementsAssigned EventRequirement[] @relation("EventRequirementResponsible")
 
   hotelReservations HotelReservation[] @relation("UserHotelReservations")
   hotelFolios       HotelFolio[]
@@ -637,6 +644,23 @@ enum RequisitionStatus {
   CANCELED
 }
 
+enum EventStatus {
+  DRAFT
+  TENTATIVE
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELED
+}
+
+enum EventRequirementStatus {
+  PENDING
+  IN_PROGRESS
+  READY
+  NOT_REQUIRED
+  CANCELED
+}
+
 model InventoryItem {
   id         String    @id @default(cuid())
   businessId String
@@ -704,6 +728,8 @@ model Requisition {
   // Tipo de requisicion y configuracion
   kind                    RequisitionKind     @default(RESTAURANT)
   eventName               String?
+  eventId                 String?
+  event                   Event?              @relation(fields: [eventId], references: [id], onDelete: SetNull)
   isPrivate               Boolean             @default(false)
   priority                RequisitionPriority @default(NORMAL)
   urgentNote              String?
@@ -734,8 +760,78 @@ model Requisition {
 
   @@index([businessId, status, createdAt])
   @@index([kind])
+  @@index([eventId])
   @@index([priority])
   @@index([isPrivate])
+}
+
+model Event {
+  id                 String      @id @default(cuid())
+  businessId         String
+  locationBusinessId String?
+
+  title              String
+  eventType          String?
+  status             EventStatus @default(DRAFT)
+  startsAt           DateTime
+  endsAt             DateTime?
+
+  estimatedGuests    Int @default(0)
+  confirmedGuests    Int @default(0)
+
+  locationName       String?
+  locationAddress    String?
+
+  contactName        String?
+  contactPhone       String?
+  contactEmail       String?
+
+  description        String?
+  internalNotes      String?
+  isPrivate          Boolean @default(false)
+
+  createdById        String
+  responsibleUserId  String?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  business           Business  @relation("EventBusiness", fields: [businessId], references: [id])
+  locationBusiness   Business? @relation("EventLocationBusiness", fields: [locationBusinessId], references: [id])
+  createdBy          User      @relation("EventCreatedBy", fields: [createdById], references: [id])
+  responsibleUser    User?     @relation("EventResponsible", fields: [responsibleUserId], references: [id])
+
+  requirements       EventRequirement[]
+  requisitions       Requisition[]
+
+  @@index([businessId, startsAt])
+  @@index([locationBusinessId, startsAt])
+  @@index([status, startsAt])
+  @@index([responsibleUserId, startsAt])
+  @@index([isPrivate])
+}
+
+model EventRequirement {
+  id                String                 @id @default(cuid())
+  eventId           String
+  category          String?
+  description       String
+  quantity          Float?
+  unit              String?
+  status            EventRequirementStatus @default(PENDING)
+  responsibleUserId String?
+  neededBy          DateTime?
+  notes             String?
+  sortOrder         Int @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  event             Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  responsibleUser   User? @relation("EventRequirementResponsible", fields: [responsibleUserId], references: [id], onDelete: SetNull)
+
+  @@index([eventId, status])
+  @@index([responsibleUserId, status])
+  @@index([neededBy])
 }
 
 model RequisitionItem {
