@@ -1,0 +1,45 @@
+OPT SYNC AGENT · SOFTRESTAURANT · VERSIÓN 1.0.0
+================================================
+
+REQUISITOS
+- Windows 10 u 11.
+- Python 3 instalado.
+- Una conexión SoftRestaurant creada en:
+  https://app.optcaminodepiedra.com/app/admin/integrations
+- El token opt_sync_... de esa conexión.
+- Una carpeta que contenga como mínimo:
+  cheques.xml
+  cheqdet.xml
+
+ARCHIVOS OPCIONALES
+- chequespagos.xml: formas de pago.
+- cancela.xml: cancelaciones.
+
+INSTALACIÓN EN LA PC DEL NEGOCIO
+1. Copia toda la carpeta opt-sync-agent a esa computadora.
+2. Ejecuta instalar_requisitos.cmd.
+3. Ejecuta configurar_agente.cmd.
+4. Pega la URL, token y ruta de los XML.
+5. Ejecuta probar_conexion.cmd.
+6. Ejecuta sincronizar_ahora.cmd para la primera prueba.
+7. Revisa el resultado en OPT Maestra > Administración > Integraciones.
+8. Cuando compruebes que los totales son correctos, ejecuta instalar_inicio_automatico.cmd.
+
+FUNCIONAMIENTO
+- Revisa la carpeta cada 60 segundos.
+- Espera a que los XML estén estables antes de leerlos.
+- Envía bloques pequeños para evitar límites de Vercel.
+- Si pierde internet, conserva su estado y vuelve a intentar.
+- Reenviar los mismos XML no duplica las ventas ya registradas.
+- También actualiza cancelaciones detectadas posteriormente.
+
+ARCHIVOS LOCALES
+- config.json: configuración y token. No lo compartas.
+- state.json: último respaldo sincronizado.
+- logs\agent.log: historial y errores.
+
+IMPORTANTE
+- Esta primera versión solo lee datos. No modifica SoftRestaurant.
+- No borres state.json salvo que soporte te lo indique.
+- Si regeneras el token en OPT, vuelve a ejecutar configurar_agente.cmd.
+- Para detener el inicio automático usa desinstalar_inicio_automatico.cmd.

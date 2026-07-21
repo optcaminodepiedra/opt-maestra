@@ -1,0 +1,12 @@
+{
+  "apiBaseUrl": "https://app.optcaminodepiedra.com",
+  "token": "opt_sync_PEGA_AQUI_EL_TOKEN",
+  "xmlFolder": "C:\\Ruta\\A\\Los\\XML",
+  "recursive": true,
+  "pollSeconds": 60,
+  "stableSeconds": 15,
+  "chunkSize": 40,
+  "requestTimeoutSeconds": 90,
+  "sourceVersion": "",
+  "verifySsl": true
+}
