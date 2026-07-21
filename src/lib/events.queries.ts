@@ -766,3 +766,97 @@ export async function getEventEditPageData(eventId: string): Promise<{
 
   return { data, initialEvent };
 }
+
+export type UpcomingEventsCardItem = {
+  id: string;
+  title: string;
+  status: string;
+  startsAt: Date;
+  estimatedGuests: number;
+  confirmedGuests: number;
+  locationName: string | null;
+  business: { id: string; name: string };
+  locationBusiness: { id: string; name: string } | null;
+  responsibleUser: { id: string; fullName: string } | null;
+  requirementsPending: number;
+  requisitionsCount: number;
+};
+
+export type UpcomingEventsCardData = {
+  canCreateEvents: boolean;
+  totalUpcoming: number;
+  next30: number;
+  events: UpcomingEventsCardItem[];
+};
+
+/**
+ * Resumen liviano para insertar la agenda de eventos en cualquier dashboard.
+ * Respeta exactamente el mismo alcance por negocio y privacidad del módulo principal.
+ */
+export async function getUpcomingEventsCardData(
+  requestedLimit = 4
+): Promise<UpcomingEventsCardData> {
+  const limit = Math.min(Math.max(Math.trunc(requestedLimit), 1), 6);
+  const scope = await resolveEventScope();
+  const today = mexicoTodayStart();
+  const thirtyDays = addDays(today, 30);
+
+  const commonWhere: Prisma.EventWhereInput = {
+    AND: [
+      scope.visibilityWhere,
+      scope.privacyWhere,
+      { startsAt: { gte: today } },
+      { status: { in: ACTIVE_EVENT_STATUSES } },
+    ],
+  };
+
+  const [rows, totalUpcoming, next30] = await Promise.all([
+    prisma.event.findMany({
+      where: commonWhere,
+      orderBy: { startsAt: "asc" },
+      take: limit,
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        startsAt: true,
+        estimatedGuests: true,
+        confirmedGuests: true,
+        locationName: true,
+        business: { select: { id: true, name: true } },
+        locationBusiness: { select: { id: true, name: true } },
+        responsibleUser: { select: { id: true, fullName: true } },
+        requirements: { select: { status: true } },
+        _count: { select: { requisitions: true } },
+      },
+    }),
+    prisma.event.count({ where: commonWhere }),
+    prisma.event.count({
+      where: {
+        AND: [commonWhere, { startsAt: { lt: thirtyDays } }],
+      },
+    }),
+  ]);
+
+  return {
+    canCreateEvents: EVENT_CREATE_ROLES.includes(scope.role),
+    totalUpcoming,
+    next30,
+    events: rows.map((event) => ({
+      id: event.id,
+      title: event.title,
+      status: event.status,
+      startsAt: event.startsAt,
+      estimatedGuests: event.estimatedGuests,
+      confirmedGuests: event.confirmedGuests,
+      locationName: event.locationName,
+      business: event.business,
+      locationBusiness: event.locationBusiness,
+      responsibleUser: event.responsibleUser,
+      requirementsPending: event.requirements.filter((requirement) =>
+        PENDING_REQUIREMENT_STATUSES.includes(requirement.status)
+      ).length,
+      requisitionsCount: event._count.requisitions,
+    })),
+  };
+}
