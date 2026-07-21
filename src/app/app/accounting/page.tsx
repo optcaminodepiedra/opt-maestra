@@ -7,6 +7,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma"; // IMPORTANTE: Agregamos Prisma
+import { UpcomingEventsCard } from "@/components/events/UpcomingEventsCard";
 
 export default async function AccountingDashboardPage() {
   const session = await getServerSession(authOptions);
@@ -106,6 +107,8 @@ export default async function AccountingDashboardPage() {
             </Button>
         </div>
       </div>
+
+      <UpcomingEventsCard />
 
       {/* TARJETAS DE MÉTRICAS (KPIs) */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

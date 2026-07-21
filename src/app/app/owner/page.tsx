@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Users, CheckSquare, TrendingUp, BedDouble, ArrowRight, DollarSign, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { UpcomingEventsCard } from "@/components/events/UpcomingEventsCard";
 
 export const dynamic = "force-dynamic";
 
@@ -76,6 +77,8 @@ export default async function OwnerDashboardPage() {
           {new Date().toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long" })}
         </p>
       </div>
+
+      <UpcomingEventsCard />
 
       {/* KPIs principales */}
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">

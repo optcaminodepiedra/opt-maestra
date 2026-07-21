@@ -18,6 +18,7 @@ import { getShiftsForDay, getCandidateUsersForBusiness, isoDate, dateOnly } from
 import { getFoodServicePax } from "@/lib/food-service";
 import { RequisitionTrackingPanel } from "@/components/manager/RequisitionTrackingPanel";
 import { loadMyRequisitions } from "@/lib/manager-requisitions";
+import { UpcomingEventsCard } from "@/components/events/UpcomingEventsCard";
 
 export const dynamic = "force-dynamic";
 
@@ -32,13 +33,14 @@ export default async function RestaurantManagerDashboard() {
   const businessId = u.primaryBusinessId;
   if (!businessId) {
     return (
-      <div className="p-6 max-w-xl mx-auto">
+      <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-6">
         <Card>
           <CardHeader><CardTitle>Sin negocio asignado</CardTitle></CardHeader>
           <CardContent className="text-sm text-muted-foreground">
             Pide a un administrador que configure tu negocio principal.
           </CardContent>
         </Card>
+        <UpcomingEventsCard />
       </div>
     );
   }
@@ -132,6 +134,8 @@ export default async function RestaurantManagerDashboard() {
           </Button>
         </div>
       </div>
+
+      <UpcomingEventsCard />
 
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
         <Card className="border-l-4 border-l-green-500 py-0">

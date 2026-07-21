@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { UpcomingEventsCard } from "@/components/events/UpcomingEventsCard";
 
 export default async function HotelHubPage() {
   const session = await getServerSession(authOptions);
@@ -17,6 +18,8 @@ export default async function HotelHubPage() {
           Reservas + Front Desk + Housekeeping + Mantenimiento + Reportes (multi-hotel).
         </p>
       </div>
+
+      <UpcomingEventsCard />
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card>

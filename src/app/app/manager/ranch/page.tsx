@@ -24,6 +24,7 @@ import { getFoodServicePax } from "@/lib/food-service";
 import { resolveManagerScope } from "@/lib/manager-scope";
 import { RequisitionTrackingPanel } from "@/components/manager/RequisitionTrackingPanel";
 import { loadMyRequisitions } from "@/lib/manager-requisitions";
+import { UpcomingEventsCard } from "@/components/events/UpcomingEventsCard";
 
 export const dynamic = "force-dynamic";
 
@@ -43,13 +44,14 @@ export default async function ManagerRanchDashboard() {
 
   if (scope.businesses.length === 0) {
     return (
-      <div className="p-6 max-w-xl mx-auto">
+      <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-6">
         <Card>
           <CardHeader><CardTitle>Sin negocios asignados</CardTitle></CardHeader>
           <CardContent className="text-sm text-muted-foreground">
             Pide a un administrador que te asigne un negocio.
           </CardContent>
         </Card>
+        <UpcomingEventsCard />
       </div>
     );
   }
@@ -202,6 +204,8 @@ export default async function ManagerRanchDashboard() {
       </div>
 
       {/* KPIs */}
+      <UpcomingEventsCard />
+
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
         <Card className="border-l-4 border-l-green-500 py-0">
           <CardHeader className="pb-1 pt-4 px-4 flex flex-row items-center justify-between space-y-0">

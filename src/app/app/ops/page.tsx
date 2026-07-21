@@ -11,6 +11,7 @@ import {
   ArrowRight, Fingerprint
 } from "lucide-react";
 import Link from "next/link";
+import { UpcomingEventsCard } from "@/components/events/UpcomingEventsCard";
 
 export const dynamic = "force-dynamic";
 
@@ -231,6 +232,8 @@ export default async function OpsStaffDashboard() {
           </Link>
         </Button>
       </div>
+
+      <UpcomingEventsCard />
 
       {/* Estado del turno */}
       <Card className={myWorkDay ? "border-green-200 bg-green-50/30" : "border-amber-200 bg-amber-50/30"}>

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { UpcomingEventsCard } from "@/components/events/UpcomingEventsCard";
 
 export default async function HotelDashboardPage() {
   const session = await getServerSession(authOptions);
@@ -76,6 +77,8 @@ export default async function HotelDashboardPage() {
             </Button>
         </div>
       </div>
+
+      <UpcomingEventsCard />
 
       {/* TARJETAS DE MÉTRICAS (KPIs) */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

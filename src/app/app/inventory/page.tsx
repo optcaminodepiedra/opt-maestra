@@ -13,6 +13,7 @@ import { RequisitionTabs } from "@/components/inventory/RequisitionTabs";
 import { RequisitionListPanel } from "@/components/inventory/RequisitionListPanel";
 import { listRequisitions } from "@/lib/requisitions.queries";
 import { ALMACEN_GENERAL_ID } from "@/lib/inventory-constants";
+import { UpcomingEventsCard } from "@/components/events/UpcomingEventsCard";
 
 export const dynamic = "force-dynamic";
 
@@ -148,6 +149,8 @@ export default async function InventoryPage({
           </Button>
         </div>
       </div>
+
+      <UpcomingEventsCard />
 
       {/* KPIs */}
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">

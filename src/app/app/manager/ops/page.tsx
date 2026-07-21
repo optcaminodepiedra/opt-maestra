@@ -35,6 +35,7 @@ import { AnalyticsToolbar } from "@/components/analytics/AnalyticsToolbar";
 import { KpiCard } from "@/components/analytics/KpiCard";
 import { TimeSeriesChart } from "@/components/analytics/TimeSeriesChart";
 import { DistributionDonut } from "@/components/analytics/DistributionDonut";
+import { UpcomingEventsCard } from "@/components/events/UpcomingEventsCard";
 
 export const dynamic = "force-dynamic";
 
@@ -58,13 +59,14 @@ export default async function ManagerOpsDashboard({
 
   if (scope.businesses.length === 0) {
     return (
-      <div className="p-6 max-w-4xl mx-auto">
+      <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-6">
         <Card>
           <CardHeader><CardTitle>Sin negocios asignados</CardTitle></CardHeader>
           <CardContent className="text-sm text-muted-foreground">
             Pide a un administrador que te asigne al menos un negocio.
           </CardContent>
         </Card>
+        <UpcomingEventsCard />
       </div>
     );
   }
@@ -180,6 +182,8 @@ export default async function ManagerOpsDashboard({
           </Button>
         </div>
       </div>
+
+      <UpcomingEventsCard />
 
       <AnalyticsToolbar
         preset={filters.preset}
