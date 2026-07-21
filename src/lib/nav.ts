@@ -48,6 +48,7 @@ const SECTIONS: RoledSection[] = [
     items: [
       { label: "Dashboard",      href: "/app",               icon: "dashboard", roles: ALL },
       { label: "Notificaciones", href: "/app/notifications", icon: "bell",      roles: ALL },
+      { label: "Eventos",        href: "/app/events",        icon: "calendar",  roles: ALL },
       { label: "Checador",       href: "/app/reloj",         icon: "reloj",     roles: ALL },
       { label: "Tareas",         href: "/app/ops/kanban/activities", icon: "tasks", roles: ALL },
     ],
