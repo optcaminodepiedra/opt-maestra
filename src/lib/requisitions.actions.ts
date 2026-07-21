@@ -80,7 +80,8 @@ export type CreateRequisitionInput = {
   businessId: string;
   kind: "RESTAURANT" | "SPECIAL_EVENT" | "OWNER_HOUSE" | "VENDING_MACHINE" | "GENERAL";
   title: string;
-  eventName?: string;          // para SPECIAL_EVENT
+  eventName?: string;          // para SPECIAL_EVENT sin evento formal
+  eventId?: string;            // evento formal de OPT Maestra
   isPrivate?: boolean;         // OWNER_HOUSE = true automático
   priority?: "NORMAL" | "URGENT";
   urgentNote?: string;         // requerido si priority = URGENT
@@ -99,8 +100,47 @@ export async function createRequisition(input: CreateRequisitionInput) {
     throw new Error("Agrega al menos un producto.");
   }
 
-  // Reglas según tipo
-  if (input.kind === "SPECIAL_EVENT" && !input.eventName?.trim()) {
+  // Reglas según tipo y asociación con Eventos
+  let linkedEvent: {
+    id: string;
+    title: string;
+    businessId: string;
+    isPrivate: boolean;
+    createdById: string;
+    responsibleUserId: string | null;
+  } | null = null;
+
+  if (input.eventId) {
+    if (input.kind !== "SPECIAL_EVENT") {
+      throw new Error("Una requisición ligada a un evento debe ser de tipo Evento especial.");
+    }
+
+    linkedEvent = await prisma.event.findUnique({
+      where: { id: input.eventId },
+      select: {
+        id: true,
+        title: true,
+        businessId: true,
+        isPrivate: true,
+        createdById: true,
+        responsibleUserId: true,
+      },
+    });
+
+    if (!linkedEvent) throw new Error("El evento seleccionado ya no existe.");
+    if (linkedEvent.businessId !== input.businessId) {
+      throw new Error("La requisición debe pertenecer al negocio responsable del evento.");
+    }
+
+    const isGlobal = GLOBAL_ROLES.includes(role) || INVENTORY_ROLES.includes(role);
+    const isInvolved =
+      linkedEvent.createdById === (me as any).id ||
+      linkedEvent.responsibleUserId === (me as any).id;
+
+    if (linkedEvent.isPrivate && !isGlobal && !isInvolved) {
+      throw new Error("No tienes acceso a este evento privado.");
+    }
+  } else if (input.kind === "SPECIAL_EVENT" && !input.eventName?.trim()) {
     throw new Error("Las requisiciones especiales requieren nombre del evento.");
   }
 
@@ -128,6 +168,8 @@ export async function createRequisition(input: CreateRequisitionInput) {
   // Validar que los items del catálogo existen en el Almacén General
   // (catálogo unificado: Goyo administra el catálogo maestro y todas las
   // requisiciones se solicitan desde ahí, sin importar el negocio)
+  let priceMap = new Map<string, number>();
+
   if (itemsCatalogIds.length > 0) {
     const valid = await prisma.inventoryItem.findMany({
       where: {
@@ -140,9 +182,7 @@ export async function createRequisition(input: CreateRequisitionInput) {
     if (valid.length !== itemsCatalogIds.length) {
       throw new Error("Algún producto del catálogo no es válido o ha sido desactivado.");
     }
-    var priceMap = new Map(valid.map((v) => [v.id, v.lastPriceCents]));
-  } else {
-    var priceMap = new Map();
+    priceMap = new Map(valid.map((v) => [v.id, v.lastPriceCents]));
   }
 
   // Validar cantidades > 0
@@ -160,7 +200,11 @@ export async function createRequisition(input: CreateRequisitionInput) {
       businessId: input.businessId,
       title: input.title.trim(),
       kind: input.kind,
-      eventName: input.kind === "SPECIAL_EVENT" ? input.eventName?.trim() : null,
+      eventName:
+        input.kind === "SPECIAL_EVENT"
+          ? linkedEvent?.title ?? input.eventName?.trim()
+          : null,
+      eventId: linkedEvent?.id ?? null,
       isPrivate,
       priority: input.priority ?? "NORMAL",
       urgentNote: input.priority === "URGENT" ? input.urgentNote?.trim() : null,
@@ -210,6 +254,10 @@ export async function createRequisition(input: CreateRequisitionInput) {
   revalidatePath("/app/manager/ops/requisitions");
   revalidatePath("/app/manager/restaurant/requisitions");
   revalidatePath("/app/manager/ranch/requisitions");
+  if (linkedEvent) {
+    revalidatePath("/app/events");
+    revalidatePath(`/app/events/${linkedEvent.id}`);
+  }
   return { ok: true, requisitionId: requisition.id };
 }
 

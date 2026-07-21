@@ -3,7 +3,7 @@ import "server-only";
 import { EventRequirementStatus, EventStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getMe } from "@/lib/session";
-import type { EventCreateData } from "@/lib/events.types";
+import type { EventCreateData, EventFormInitialData } from "@/lib/events.types";
 
 export const EVENT_STATUSES = [
   "DRAFT",
@@ -94,7 +94,19 @@ export const EVENT_CREATE_ROLES = [
   "STAFF_RECEPTION",
   "STAFF_EXPERIENCES",
 ];
-const EVENT_FINANCIAL_ROLES = [
+
+const REQUISITION_CREATE_ROLES = [
+  "MASTER_ADMIN",
+  "OWNER",
+  "SUPERIOR",
+  "INVENTORY",
+  "MANAGER",
+  "MANAGER_OPS",
+  "MANAGER_RESTAURANT",
+  "MANAGER_HOTEL",
+  "MANAGER_RANCH",
+];
+export const EVENT_FINANCIAL_ROLES = [
   "MASTER_ADMIN",
   "OWNER",
   "SUPERIOR",
@@ -413,7 +425,7 @@ export async function getEventsDashboardData(
   };
 }
 
-export async function getEventCreateData(): Promise<EventCreateData> {
+export async function getEventCreateData(eventId?: string): Promise<EventCreateData> {
   const scope = await resolveEventScope();
 
   if (!EVENT_CREATE_ROLES.includes(scope.role)) {
@@ -435,7 +447,7 @@ export async function getEventCreateData(): Promise<EventCreateData> {
   };
 
   const requisitionWhere: Prisma.RequisitionWhereInput = {
-    eventId: null,
+    ...(eventId ? { OR: [{ eventId: null }, { eventId }] } : { eventId: null }),
     status: {
       in: [
         "DRAFT",
@@ -475,6 +487,7 @@ export async function getEventCreateData(): Promise<EventCreateData> {
         status: true,
         kind: true,
         neededBy: true,
+        eventId: true,
         business: { select: { id: true, name: true } },
       },
       orderBy: [{ neededBy: "asc" }, { createdAt: "desc" }],
@@ -493,6 +506,7 @@ export async function getEventCreateData(): Promise<EventCreateData> {
       : scope.businesses[0].id;
 
   return {
+    canCreateRequisition: REQUISITION_CREATE_ROLES.includes(scope.role),
     creator: {
       id: creator.id,
       fullName: creator.fullName,
@@ -506,4 +520,249 @@ export async function getEventCreateData(): Promise<EventCreateData> {
       neededBy: requisition.neededBy?.toISOString() ?? null,
     })),
   };
+}
+
+function toMexicoLocalInput(date: Date | null, includeTime = true): string {
+  if (!date) return "";
+
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Mexico_City",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: includeTime ? "2-digit" : undefined,
+    minute: includeTime ? "2-digit" : undefined,
+    hourCycle: "h23",
+  }).formatToParts(date);
+
+  const part = (type: string) =>
+    parts.find((item) => item.type === type)?.value ?? "";
+  const datePart = `${part("year")}-${part("month")}-${part("day")}`;
+  return includeTime ? `${datePart}T${part("hour")}:${part("minute")}` : datePart;
+}
+
+export type EventDetailData = {
+  event: {
+    id: string;
+    title: string;
+    eventType: string | null;
+    status: string;
+    startsAt: Date;
+    endsAt: Date | null;
+    estimatedGuests: number;
+    confirmedGuests: number;
+    locationName: string | null;
+    locationAddress: string | null;
+    contactName: string | null;
+    contactPhone: string | null;
+    contactEmail: string | null;
+    description: string | null;
+    internalNotes: string | null;
+    isPrivate: boolean;
+    paymentTiming: string;
+    paymentStatus: string;
+    quotedAmountCents: number;
+    paidAmountCents: number;
+    paymentDueAt: Date | null;
+    paymentNotes: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+    business: { id: string; name: string };
+    locationBusiness: { id: string; name: string } | null;
+    createdBy: { id: string; fullName: string; role: string };
+    responsibleUser: { id: string; fullName: string; role: string } | null;
+    requirements: Array<{
+      id: string;
+      category: string | null;
+      description: string;
+      quantity: number | null;
+      unit: string | null;
+      status: string;
+      neededBy: Date | null;
+      notes: string | null;
+      responsibleUser: { id: string; fullName: string } | null;
+    }>;
+    requisitions: Array<{
+      id: string;
+      title: string;
+      status: string;
+      kind: string;
+      priority: string;
+      neededBy: Date | null;
+      requiresSeparatePayment: boolean;
+      createdBy: { id: string; fullName: string };
+      itemCount: number;
+      estimatedTotalCents: number;
+    }>;
+  };
+  permissions: {
+    canEdit: boolean;
+    canDelete: boolean;
+    canCreateRequisition: boolean;
+    canViewFinancials: boolean;
+  };
+};
+
+export async function getEventDetailData(eventId: string): Promise<EventDetailData | null> {
+  const scope = await resolveEventScope();
+
+  const event = await prisma.event.findFirst({
+    where: {
+      AND: [{ id: eventId }, scope.visibilityWhere, scope.privacyWhere],
+    },
+    select: {
+      id: true,
+      title: true,
+      eventType: true,
+      status: true,
+      startsAt: true,
+      endsAt: true,
+      estimatedGuests: true,
+      confirmedGuests: true,
+      locationName: true,
+      locationAddress: true,
+      contactName: true,
+      contactPhone: true,
+      contactEmail: true,
+      description: true,
+      internalNotes: true,
+      isPrivate: true,
+      paymentTiming: true,
+      paymentStatus: true,
+      quotedAmountCents: true,
+      paidAmountCents: true,
+      paymentDueAt: true,
+      paymentNotes: true,
+      createdAt: true,
+      updatedAt: true,
+      business: { select: { id: true, name: true } },
+      locationBusiness: { select: { id: true, name: true } },
+      createdBy: { select: { id: true, fullName: true, role: true } },
+      responsibleUser: { select: { id: true, fullName: true, role: true } },
+      requirements: {
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+        select: {
+          id: true,
+          category: true,
+          description: true,
+          quantity: true,
+          unit: true,
+          status: true,
+          neededBy: true,
+          notes: true,
+          responsibleUser: { select: { id: true, fullName: true } },
+        },
+      },
+      requisitions: {
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          kind: true,
+          priority: true,
+          neededBy: true,
+          requiresSeparatePayment: true,
+          createdBy: { select: { id: true, fullName: true } },
+          items: {
+            select: { qtyRequested: true, estimatedPriceCents: true },
+          },
+        },
+      },
+    },
+  });
+
+  if (!event) return null;
+
+  const canManageBusiness =
+    GLOBAL_BUSINESS_ROLES.includes(scope.role) ||
+    scope.businessIds.includes(event.business.id) ||
+    Boolean(event.locationBusiness && scope.businessIds.includes(event.locationBusiness.id));
+  const isDirectlyInvolved =
+    event.createdBy.id === scope.userId || event.responsibleUser?.id === scope.userId;
+  const canEdit =
+    EVENT_CREATE_ROLES.includes(scope.role) && (canManageBusiness || isDirectlyInvolved);
+  const canDelete =
+    canEdit &&
+    (PRIVATE_EVENT_ROLES.includes(scope.role) ||
+      (event.createdBy.id === scope.userId && ["DRAFT", "TENTATIVE"].includes(event.status)));
+
+  return {
+    event: {
+      ...event,
+      requisitions: event.requisitions.map(({ items, ...requisition }) => ({
+        ...requisition,
+        itemCount: items.length,
+        estimatedTotalCents: items.reduce(
+          (total, item) => total + item.qtyRequested * item.estimatedPriceCents,
+          0
+        ),
+      })),
+    },
+    permissions: {
+      canEdit,
+      canDelete,
+      canCreateRequisition: REQUISITION_CREATE_ROLES.includes(scope.role),
+      canViewFinancials: EVENT_FINANCIAL_ROLES.includes(scope.role),
+    },
+  };
+}
+
+export async function getEventEditPageData(eventId: string): Promise<{
+  data: EventCreateData;
+  initialEvent: EventFormInitialData;
+} | null> {
+  const detail = await getEventDetailData(eventId);
+  if (!detail) return null;
+  if (!detail.permissions.canEdit) {
+    throw new Error("No tienes permisos para editar este evento.");
+  }
+
+  const data = await getEventCreateData(eventId);
+  const event = detail.event;
+
+  const initialEvent: EventFormInitialData = {
+    id: event.id,
+    createdBy: {
+      fullName: event.createdBy.fullName,
+      role: event.createdBy.role,
+    },
+    title: event.title,
+    eventType: event.eventType ?? "",
+    status: event.status as EventFormInitialData["status"],
+    businessId: event.business.id,
+    locationBusinessId: event.locationBusiness?.id ?? "",
+    locationName: event.locationName ?? "",
+    locationAddress: event.locationAddress ?? "",
+    startsAtLocal: toMexicoLocalInput(event.startsAt),
+    endsAtLocal: toMexicoLocalInput(event.endsAt),
+    estimatedGuests: event.estimatedGuests,
+    confirmedGuests: event.confirmedGuests,
+    contactName: event.contactName ?? "",
+    contactPhone: event.contactPhone ?? "",
+    contactEmail: event.contactEmail ?? "",
+    responsibleUserId: event.responsibleUser?.id ?? "",
+    description: event.description ?? "",
+    internalNotes: event.internalNotes ?? "",
+    isPrivate: event.isPrivate,
+    paymentTiming: event.paymentTiming as EventFormInitialData["paymentTiming"],
+    paymentStatus: event.paymentStatus as EventFormInitialData["paymentStatus"],
+    quotedAmount: event.quotedAmountCents / 100,
+    paidAmount: event.paidAmountCents / 100,
+    paymentDueLocal: toMexicoLocalInput(event.paymentDueAt, false),
+    paymentNotes: event.paymentNotes ?? "",
+    requisitionIds: event.requisitions.map((requisition) => requisition.id),
+    requirements: event.requirements.map((requirement) => ({
+      id: requirement.id,
+      category: requirement.category ?? "",
+      description: requirement.description,
+      quantity: requirement.quantity,
+      unit: requirement.unit ?? "",
+      responsibleUserId: requirement.responsibleUser?.id ?? "",
+      neededByLocal: toMexicoLocalInput(requirement.neededBy),
+      notes: requirement.notes ?? "",
+    })),
+  };
+
+  return { data, initialEvent };
 }

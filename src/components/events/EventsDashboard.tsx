@@ -109,7 +109,7 @@ function formatTime(date: Date): string {
     timeZone: "America/Mexico_City",
     hour: "2-digit",
     minute: "2-digit",
-    hour12: true,
+    hour12: false,
   }).format(date);
 }
 
@@ -222,9 +222,11 @@ function RequirementBadge({ event }: { event: EventDashboardRow }) {
 export function EventsDashboard({
   data,
   createdEventId,
+  deletedEvent,
 }: {
   data: EventDashboardData;
   createdEventId?: string | null;
+  deletedEvent?: boolean;
 }) {
   const { filters, businesses, stats, events, userScope } = data;
 
@@ -260,6 +262,13 @@ export function EventsDashboard({
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 flex items-center gap-2">
           <CheckCircle2 className="h-4 w-4 shrink-0" />
           Evento guardado correctamente. Ya aparece en la agenda.
+        </div>
+      )}
+
+      {deletedEvent && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 flex items-center gap-2">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          Evento eliminado correctamente. Las requisiciones asociadas se conservaron.
         </div>
       )}
 
@@ -412,7 +421,7 @@ export function EventsDashboard({
                       </TableCell>
                       <TableCell className="align-top min-w-[220px]">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <p className="font-medium">{event.title}</p>
+                          <Link href={`/app/events/${event.id}`} className="font-medium hover:underline">{event.title}</Link>
                           {event.isPrivate && (
                             <Badge
                               variant="outline"
@@ -484,7 +493,7 @@ export function EventsDashboard({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <h2 className="font-semibold truncate">{event.title}</h2>
+                        <Link href={`/app/events/${event.id}`} className="font-semibold truncate hover:underline">{event.title}</Link>
                         {event.isPrivate && (
                           <LockKeyhole className="h-3.5 w-3.5 text-amber-600" />
                         )}

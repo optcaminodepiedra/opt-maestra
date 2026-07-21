@@ -11,5 +11,11 @@ export default async function EventsPage({
   const filters = await searchParams;
   const data = await getEventsDashboardData(filters);
 
-  return <EventsDashboard data={data} createdEventId={filters.created ?? null} />;
+  return (
+    <EventsDashboard
+      data={data}
+      createdEventId={filters.created ?? null}
+      deletedEvent={filters.deleted === "1"}
+    />
+  );
 }

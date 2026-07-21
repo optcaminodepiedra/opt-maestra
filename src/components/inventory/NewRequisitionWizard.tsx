@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { LocalizedDateTimeField } from "@/components/events/LocalizedDateTimeField";
 import {
   Plus, Trash2, Search, AlertCircle, CheckCircle2, Package,
   UtensilsCrossed, Sparkles, Home, Coffee, Layers,
@@ -108,6 +109,8 @@ type Props = {
   items: InventoryItem[];
   userRole: string;
   initialKind?: "RESTAURANT" | "SPECIAL_EVENT" | "OWNER_HOUSE" | "VENDING_MACHINE";
+  initialEvent?: { id: string; title: string };
+  returnTo?: string;
 };
 
 const fmt = (cents: number) =>
@@ -119,6 +122,8 @@ export function NewRequisitionWizard({
   items,
   userRole,
   initialKind,
+  initialEvent,
+  returnTo,
 }: Props) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -142,8 +147,8 @@ export function NewRequisitionWizard({
 
   // Detalles
   const [businessId, setBusinessId] = useState<string>(initialBusinessId ?? "");
-  const [title, setTitle] = useState("");
-  const [eventName, setEventName] = useState("");
+  const [title, setTitle] = useState(initialEvent ? `Requisición · ${initialEvent.title}` : "");
+  const [eventName, setEventName] = useState(initialEvent?.title ?? "");
   const [priority, setPriority] = useState<"NORMAL" | "URGENT">("NORMAL");
   const [urgentNote, setUrgentNote] = useState("");
   const [requiresSeparatePayment, setRequiresSeparatePayment] = useState(false);
@@ -265,6 +270,7 @@ export function NewRequisitionWizard({
           kind: kind.key,
           title: title.trim(),
           eventName: eventName.trim() || undefined,
+          eventId: initialEvent?.id,
           priority,
           urgentNote: priority === "URGENT" ? urgentNote.trim() : undefined,
           requiresSeparatePayment,
@@ -289,7 +295,8 @@ export function NewRequisitionWizard({
           }),
         };
         const res = await createRequisition(payload as any);
-        router.push(`/app/inventory/requisitions/${res.requisitionId}`);
+        router.push(returnTo ?? `/app/inventory/requisitions/${res.requisitionId}`);
+        router.refresh();
       } catch (err: any) {
         setError(err.message);
       }
@@ -354,9 +361,11 @@ export function NewRequisitionWizard({
 
   return (
     <div className="space-y-4">
-      <Button variant="ghost" size="sm" onClick={() => setStep("kind")}>
-        <ArrowLeft className="w-4 h-4 mr-1" /> Cambiar tipo
-      </Button>
+      {!initialEvent && (
+        <Button variant="ghost" size="sm" onClick={() => setStep("kind")}>
+          <ArrowLeft className="w-4 h-4 mr-1" /> Cambiar tipo
+        </Button>
+      )}
 
       <Card className={kind.color}>
         <CardContent className="py-3">
@@ -395,7 +404,8 @@ export function NewRequisitionWizard({
                 <select
                   value={businessId}
                   onChange={(e) => setBusinessId(e.target.value)}
-                  className="w-full h-9 px-3 border rounded-lg text-sm bg-background mt-1"
+                  disabled={Boolean(initialEvent)}
+                  className="w-full h-9 px-3 border rounded-lg text-sm bg-background mt-1 disabled:opacity-70"
                 >
                   <option value="">— Selecciona —</option>
                   {businesses.map((b) => (
@@ -426,20 +436,27 @@ export function NewRequisitionWizard({
                   type="text"
                   value={eventName}
                   onChange={(e) => setEventName(e.target.value)}
+                  readOnly={Boolean(initialEvent)}
                   placeholder="Ej: Día de las Madres, Cumpleaños VIP, Boda Sánchez..."
-                  className="w-full h-9 px-3 border rounded-lg text-sm bg-background mt-1"
+                  className="w-full h-9 px-3 border rounded-lg text-sm bg-background mt-1 read-only:bg-muted/40"
                 />
+                {initialEvent && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Esta requisición quedará ligada al evento y aparecerá en su detalle.
+                  </p>
+                )}
               </div>
             )}
 
             <div>
               <label className="text-[10px] text-muted-foreground uppercase">Fecha límite (opcional)</label>
-              <input
-                type="date"
-                value={neededByIso}
-                onChange={(e) => setNeededByIso(e.target.value)}
-                className="w-full h-9 px-3 border rounded-lg text-sm bg-background mt-1"
-              />
+              <div className="mt-1">
+                <LocalizedDateTimeField
+                  value={neededByIso}
+                  onChange={setNeededByIso}
+                  includeTime={false}
+                />
+              </div>
             </div>
 
             <div>

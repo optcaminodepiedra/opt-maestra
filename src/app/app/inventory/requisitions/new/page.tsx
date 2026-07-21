@@ -20,12 +20,12 @@ const ALLOWED_ROLES = [
 export default async function NewRequisitionPage({
   searchParams,
 }: {
-  searchParams: Promise<{ businessId?: string; kind?: string }>;
+  searchParams: Promise<{ businessId?: string; kind?: string; eventId?: string; returnTo?: string }>;
 }) {
   const session = await getServerSession(authOptions);
   if (!session?.user) redirect("/login");
 
-  const me = session.user as { id?: string; role?: string; primaryBusinessId?: string | null };
+  const me = session.user as { id?: string; role?: string; businessId?: string | null; primaryBusinessId?: string | null };
   const role = me.role as string;
 
   if (!ALLOWED_ROLES.includes(role)) {
@@ -57,7 +57,11 @@ export default async function NewRequisitionPage({
   } else {
     // Manager: solo su negocio principal + accesos
     const userId = me.id!;
-    const businessIds: string[] = me.primaryBusinessId ? [me.primaryBusinessId] : [];
+    const businessIds: string[] = [];
+    if (me.businessId) businessIds.push(me.businessId);
+    if (me.primaryBusinessId && !businessIds.includes(me.primaryBusinessId)) {
+      businessIds.push(me.primaryBusinessId);
+    }
     try {
       const access = await prisma.$queryRaw<{ businessId: string }[]>`
         SELECT "businessId" FROM "UserBusinessAccess" WHERE "userId" = ${userId}
@@ -87,10 +91,55 @@ export default async function NewRequisitionPage({
     });
   }
 
+  let linkedEvent: { id: string; title: string; businessId: string; isPrivate: boolean; createdById: string; responsibleUserId: string | null } | null = null;
+
+  if (sp.eventId) {
+    linkedEvent = await prisma.event.findUnique({
+      where: { id: sp.eventId },
+      select: {
+        id: true,
+        title: true,
+        businessId: true,
+        isPrivate: true,
+        createdById: true,
+        responsibleUserId: true,
+      },
+    });
+
+    const hasBusinessAccess = linkedEvent
+      ? businesses.some((business) => business.id === linkedEvent!.businessId)
+      : false;
+    const isInvolved = linkedEvent
+      ? linkedEvent.createdById === me.id || linkedEvent.responsibleUserId === me.id
+      : false;
+
+    if (!linkedEvent || (!isInventoryRole && !hasBusinessAccess) || (linkedEvent.isPrivate && !isInventoryRole && !isInvolved)) {
+      return (
+        <div className="p-6 max-w-xl mx-auto">
+          <Card>
+            <CardHeader><CardTitle>Evento no disponible</CardTitle></CardHeader>
+            <CardContent className="text-sm text-muted-foreground">
+              El evento no existe o no tienes permisos para crear una requisición asociada.
+            </CardContent>
+          </Card>
+        </div>
+      );
+    }
+  }
+
   const selectedBusinessId =
-    sp.businessId && businesses.some((b) => b.id === sp.businessId)
-      ? sp.businessId
-      : businesses[0]?.id ?? null;
+    linkedEvent && businesses.some((business) => business.id === linkedEvent!.businessId)
+      ? linkedEvent.businessId
+      : sp.businessId && businesses.some((b) => b.id === sp.businessId)
+        ? sp.businessId
+        : businesses[0]?.id ?? null;
+
+  const safeReturnTo =
+    sp.returnTo && sp.returnTo.startsWith("/app/")
+      ? sp.returnTo
+      : linkedEvent
+        ? `/app/events/${linkedEvent.id}`
+        : undefined;
 
   // ─── CATÁLOGO UNIFICADO ──────────────────────────────────────
   // SIEMPRE cargamos del Almacén General (Goyo lo administra)
@@ -113,12 +162,16 @@ export default async function NewRequisitionPage({
   });
 
   const validKinds = ["RESTAURANT", "SPECIAL_EVENT", "OWNER_HOUSE", "VENDING_MACHINE"];
-  const initialKind = sp.kind && validKinds.includes(sp.kind) ? sp.kind : undefined;
+  const initialKind = linkedEvent
+    ? "SPECIAL_EVENT"
+    : sp.kind && validKinds.includes(sp.kind)
+      ? sp.kind
+      : undefined;
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-4">
       <Button variant="ghost" size="sm" asChild>
-        <Link href="/app/inventory">
+        <Link href={safeReturnTo ?? "/app/inventory"}>
           <ArrowLeft className="w-4 h-4 mr-1" /> Volver
         </Link>
       </Button>
@@ -129,7 +182,9 @@ export default async function NewRequisitionPage({
           Nueva requisición
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Solicita productos del catálogo del almacén general
+          {linkedEvent
+            ? `Solicita productos para ${linkedEvent.title}; quedarán asociados automáticamente.`
+            : "Solicita productos del catálogo del almacén general"}
         </p>
       </div>
 
@@ -142,6 +197,8 @@ export default async function NewRequisitionPage({
         }))}
         userRole={role}
         initialKind={initialKind as any}
+        initialEvent={linkedEvent ? { id: linkedEvent.id, title: linkedEvent.title } : undefined}
+        returnTo={safeReturnTo}
       />
     </div>
   );
